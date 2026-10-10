@@ -19,6 +19,7 @@ enum {
 	CONTROLLER_KEY_DELETE = 0x2e,
 	CONTROLLER_CAPTURE_THRESHOLD = 8192,
 	CONTROLLER_PAGE_SIZE = 8,
+	CONTROLLER_AXIS_PAGE_SIZE = 3,
 };
 
 typedef struct ControllerCaptureState {
@@ -27,6 +28,7 @@ typedef struct ControllerCaptureState {
 	int digital_axis;
 	int wait_for_release;
 	int16_t axis_baseline[AERON_CONTROLLER_AXIS_MAX];
+	uint8_t pov_baseline[AERON_CONTROLLER_HAT_MAX];
 } ControllerCaptureState;
 
 typedef struct ControllerBindingRow {
@@ -49,6 +51,7 @@ typedef struct ControllerBindingEditState {
 
 static ControllerCaptureState g_controllerCapture = { -1, -1, -1, 0, { 0 } };
 static ControllerBindingEditState g_controllerBindingEdit;
+static int g_controllerAxisPage;
 static int g_controllerButtonPage;
 static int g_controllerSlot;
 static XwaControllerOptions* ControllerScreen_Options(XwaModernInputOptions* options) {
@@ -58,6 +61,7 @@ void XwaModernControllerOptionsScreen_SelectSlot(int slot) {
 	g_controllerSlot = slot == 1;
 	XwaModernControllerOptionsScreen_ResetCapture();
 	g_controllerButtonPage = 0;
+	g_controllerAxisPage = 0;
 }
 
 /* Rising-edge selection avoids latched throttle switches stealing focus. */
@@ -314,25 +318,6 @@ static int ControllerScreen_UpdateDigitalAxisCapture(const AeronControllerSnapsh
 	return 1;
 }
 
-static int ControllerScreen_PovReleased(const AeronControllerSnapshot* controller) {
-	int hat;
-
-	if (!controller) {
-		return 0;
-	}
-	if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
-		return !(controller->gamepad_buttons &
-				 ((1u << AERON_GAMEPAD_BUTTON_DPAD_UP) | (1u << AERON_GAMEPAD_BUTTON_DPAD_RIGHT) |
-				  (1u << AERON_GAMEPAD_BUTTON_DPAD_DOWN) | (1u << AERON_GAMEPAD_BUTTON_DPAD_LEFT)));
-	}
-	for (hat = 0; hat < controller->hat_count; ++hat) {
-		if (controller->raw_hats[hat] != AERON_CONTROLLER_HAT_CENTERED) {
-			return 0;
-		}
-	}
-	return 1;
-}
-
 static int ControllerScreen_FirstPressedButton(const AeronControllerSnapshot* controller) {
 	uint64_t pressed;
 	int source;
@@ -365,9 +350,8 @@ static int ControllerScreen_UpdatePovCapture(XwaModernInputOptions* options,
 		return 0;
 	}
 	if (g_controllerCapture.wait_for_release) {
-		if (ControllerScreen_PovReleased(controller)) {
-			g_controllerCapture.wait_for_release = 0;
-		}
+		/* Do not wait for EVERY hat to center: maintained switches can stay on. */
+		g_controllerCapture.wait_for_release = 0;
 		return 0;
 	}
 	if (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
@@ -378,7 +362,8 @@ static int ControllerScreen_UpdatePovCapture(XwaModernInputOptions* options,
 		}
 	} else {
 		for (source = 0; source < controller->hat_count; ++source) {
-			if (controller->raw_hats[source] != AERON_CONTROLLER_HAT_CENTERED) {
+			if (controller->raw_hats[source] != AERON_CONTROLLER_HAT_CENTERED &&
+				controller->raw_hats[source] != g_controllerCapture.pov_baseline[source]) {
 				break;
 			}
 		}
@@ -413,6 +398,7 @@ void XwaModernControllerOptionsScreen_ResetCapture(void) {
 	g_controllerCapture.button = -1;
 	g_controllerCapture.digital_axis = -1;
 	g_controllerCapture.wait_for_release = 0;
+	memset(&g_controllerButtonScan, 0, sizeof(g_controllerButtonScan));
 }
 
 void XwaModernControllerOptionsScreen_Leave(void) {
@@ -497,13 +483,18 @@ XwaModernControllerScreenResult XwaModernControllerOptionsScreen_Update(int menu
 }
 
 int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row) {
-	static const char* const logical_names[] = { "Yaw", "Pitch", "Throttle", "Roll" };
+	static const char* const logical_names[] = { "Yaw", "Pitch", "Throttle", "Roll", "Hyperdrive" };
 	static const char* const toggle_text[] = { "No", "Yes" };
 	XwaModernInputOptions options;
 	XwaModernOptionsMenu menu;
 	const AeronControllerSnapshot* selected;
 	XwaControllerProfile* profile;
 	char value[96];
+	char title[64];
+	const int page_count = (XWA_CONTROLLER_LOGICAL_AXIS_COUNT + CONTROLLER_AXIS_PAGE_SIZE - 1) /
+						   CONTROLLER_AXIS_PAGE_SIZE;
+	int start;
+	int count;
 	int axis;
 	int changed;
 	int back;
@@ -511,24 +502,37 @@ int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row) {
 	if (!cursor_row) {
 		return 0;
 	}
+	if (g_controllerAxisPage < 0 || g_controllerAxisPage >= page_count) {
+		g_controllerAxisPage = 0;
+	}
+	start = g_controllerAxisPage * CONTROLLER_AXIS_PAGE_SIZE;
+	count = XWA_CONTROLLER_LOGICAL_AXIS_COUNT - start;
+	if (count > CONTROLLER_AXIS_PAGE_SIZE) {
+		count = CONTROLLER_AXIS_PAGE_SIZE;
+	}
+	if (*cursor_row < 0 || *cursor_row >= count * 3 + 2) {
+		*cursor_row = 0;
+	}
 	XwaModernInputOptions_Get(&options);
 	selected = ControllerScreen_Options(&options)->enabled
 		? ControllerScreen_Selected(&ControllerScreen_Options(&options)->device, NULL) : NULL;
 	profile = ControllerScreen_Profile(&options, selected);
-	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 60, cursor_row, 13);
+	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 78, cursor_row, count * 3 + 2);
 	if (g_controllerCapture.axis >= 0 && menu.key == XWA_MODERN_MENU_KEY_ESCAPE) {
 		g_controllerCapture.axis = -1;
 		XwaModernOptionsMenu_TakeEscape(&menu);
 	}
 	ControllerScreen_UpdateAxisCapture(&options, selected);
-	XwaModernOptionsMenu_DrawTitle(&menu, g_controllerSlot ? "Controller 2 Axis Mapping" : "Controller 1 Axis Mapping");
-	for (axis = 0; axis < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++axis) {
+	snprintf(title, sizeof title, "Controller %d Axis Mapping (%d/%d)",
+			 g_controllerSlot + 1, g_controllerAxisPage + 1, page_count);
+	XwaModernOptionsMenu_DrawTitle(&menu, title);
+	for (axis = start; axis < start + count; ++axis) {
 		char source_name[48];
 		const int16_t live = ControllerScreen_Axis(selected, profile->axes[axis].source);
 		ControllerScreen_AxisName(selected, profile->axes[axis].source, source_name, sizeof(source_name));
 		snprintf(value, sizeof(value), "%s (%+.2f)", source_name, live < 0 ? live / 32768.0 : live / 32767.0);
-		changed =
-			XwaModernOptionsMenu_DrawValue(&menu, logical_names[axis], value, 120 + axis * 3, !selected);
+		changed = XwaModernOptionsMenu_DrawValue(
+			&menu, logical_names[axis], value, 120 + axis * 3, !selected);
 		if (changed) {
 			ControllerScreen_BeginAxisCapture(selected, axis);
 		}
@@ -556,7 +560,7 @@ int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row) {
 			profile->axes[axis].deadzone = percent / 100.0f;
 			XwaModernInputOptions_Set(&options);
 		}
-		if (axis + 1 < XWA_CONTROLLER_LOGICAL_AXIS_COUNT) {
+		if (axis + 1 < start + count) {
 			menu.y += 20;
 		}
 	}
@@ -570,10 +574,17 @@ int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row) {
 								  &(FrontendRect) { 0, menu.y, 639, menu.y + 15 }, g_colorGreen);
 		menu.y += 20;
 	}
-	back = XwaModernOptionsMenu_DrawAction(&menu, FrontendString_Get(STR_BACK), 132, 0);
+	if (XwaModernOptionsMenu_DrawAction(&menu, g_controllerAxisPage ? "Previous Page" : "Next Page", 145, 0)) {
+		g_controllerCapture.axis = -1;
+		g_controllerAxisPage = (g_controllerAxisPage + 1) % page_count;
+		*cursor_row = 0;
+		return 0;
+	}
+	back = XwaModernOptionsMenu_DrawAction(&menu, FrontendString_Get(STR_BACK), 150, 0);
 	back |= XwaModernOptionsMenu_TakeEscape(&menu);
 	if (back) {
 		g_controllerCapture.axis = -1;
+		g_controllerAxisPage = 0;
 		return 1;
 	}
 	return 0;
@@ -1030,6 +1041,11 @@ int XwaModernControllerButtonsScreen_Update(int menu_center_x, int* cursor_row) 
 		g_controllerCapture.digital_axis = -1;
 		g_controllerCapture.button = XWA_CONTROLLER_LOGICAL_BUTTON_COUNT;
 		g_controllerCapture.wait_for_release = 1;
+		memset(g_controllerCapture.pov_baseline, 0, sizeof(g_controllerCapture.pov_baseline));
+		if (selected && selected->kind == AERON_CONTROLLER_KIND_JOYSTICK) {
+			memcpy(g_controllerCapture.pov_baseline, selected->raw_hats,
+				   sizeof(g_controllerCapture.pov_baseline));
+		}
 	}
 	if (selected && XwaModernOptionsMenu_LastRowSelected(&menu) &&
 		Keyboard_IsKeyDown(CONTROLLER_KEY_DELETE)) {

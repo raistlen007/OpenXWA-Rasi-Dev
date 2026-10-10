@@ -1,4 +1,5 @@
 #include "xwa_runtime/input/controller_mapping.h"
+#include "xwa_runtime/input/hyperdrive_axis.h"
 
 #include "aeron/aeron.h"
 
@@ -20,6 +21,8 @@ typedef struct XwaControllerMappingState {
 	uint64_t pending_buttons[2];
 	int previous_pov[2];
 	uint32_t actions_instance_id[2];
+	uint32_t hyperdrive_instance_id[2];
+	int hyperdrive_armed[2];
 } XwaControllerMappingState;
 
 static XwaControllerMappingState g_controllerMapping;
@@ -293,6 +296,8 @@ void XwaControllerMapping_SetOptions(const XwaControllerOptions* options) {
 	g_controllerMapping.pending_buttons[0] = 0;
 	g_controllerMapping.previous_pov[0] = -1;
 	g_controllerMapping.actions_instance_id[0] = 0;
+	g_controllerMapping.hyperdrive_instance_id[0] = 0;
+	g_controllerMapping.hyperdrive_armed[0] = 0;
 }
 
 void XwaControllerMapping_SetSecondaryOptions(const XwaControllerOptions* options) {
@@ -308,6 +313,8 @@ void XwaControllerMapping_SetSecondaryOptions(const XwaControllerOptions* option
 	g_controllerMapping.pending_buttons[1] = 0;
 	g_controllerMapping.previous_pov[1] = -1;
 	g_controllerMapping.actions_instance_id[1] = 0;
+	g_controllerMapping.hyperdrive_instance_id[1] = 0;
+	g_controllerMapping.hyperdrive_armed[1] = 0;
 }
 
 uint32_t XwaControllerMapping_SelectedInstanceId(void) {
@@ -347,6 +354,8 @@ int XwaControllerMapping_ConsumeSelectionChange(void) {
 		g_controllerMapping.digital_axis_buttons[slot] = 0;
 		g_controllerMapping.pending_buttons[slot] = 0;
 		g_controllerMapping.previous_pov[slot] = -1;
+		g_controllerMapping.hyperdrive_instance_id[slot] = 0;
+		g_controllerMapping.hyperdrive_armed[slot] = 0;
 		if (controller) ControllerMapping_LogUnavailableSources(controller,
 										 slot ? &g_controllerMapping.secondary : &g_controllerMapping.options);
 		changed = 1;
@@ -387,6 +396,53 @@ int XwaControllerMapping_GetState(XwaControllerLogicalState* state) {
 		}
 	}
 	return found;
+}
+
+int XwaControllerMapping_ConsumeHyperdriveEngage(void) {
+	const AeronInputSnapshot* input = Aeron_InputSnapshot();
+	int engage = 0;
+
+	/* Neither controller may retain an armed lever across focus loss. */
+	if (!input || !input->has_focus) {
+		for (int slot = 0; slot < 2; ++slot) {
+			g_controllerMapping.hyperdrive_instance_id[slot] = 0;
+			g_controllerMapping.hyperdrive_armed[slot] = 0;
+		}
+		return 0;
+	}
+	for (int slot = 0; slot < 2; ++slot) {
+		const AeronControllerSnapshot* controller = XwaControllerMapping_ControllerForSlot(slot);
+		const XwaControllerOptions* options = slot ? &g_controllerMapping.secondary : &g_controllerMapping.options;
+		const XwaControllerProfile* profile;
+		const XwaControllerAxisBinding* binding;
+		uint32_t value;
+		int source;
+
+		if (!controller || !controller->connected) {
+			g_controllerMapping.hyperdrive_instance_id[slot] = 0;
+			g_controllerMapping.hyperdrive_armed[slot] = 0;
+			continue;
+		}
+		if (controller->instance_id != g_controllerMapping.hyperdrive_instance_id[slot]) {
+			g_controllerMapping.hyperdrive_instance_id[slot] = controller->instance_id;
+			g_controllerMapping.hyperdrive_armed[slot] = 0;
+		}
+		profile = ControllerMapping_Profile(options, controller);
+		binding = &profile->axes[XWA_CONTROLLER_AXIS_HYPERDRIVE];
+		source = binding->source;
+		if (source < 0 || source >= (controller->kind == AERON_CONTROLLER_KIND_GAMEPAD
+								   ? AERON_GAMEPAD_AXIS_COUNT : controller->axis_count)) {
+			g_controllerMapping.hyperdrive_armed[slot] = 0;
+			continue;
+		}
+		value = ControllerMapping_IsTrigger(controller, source)
+			? ControllerMapping_TriggerAxis(ControllerMapping_AxisValue(controller, source),
+										   binding->invert, binding->deadzone)
+			: ControllerMapping_CenteredAxis(ControllerMapping_AxisValue(controller, source),
+											binding->invert, binding->deadzone);
+		engage |= XwaHyperdriveAxis_Update(value, &g_controllerMapping.hyperdrive_armed[slot]);
+	}
+	return engage;
 }
 
 void XwaControllerMapping_CopySelectedActions(uint16_t actions[20]) {
