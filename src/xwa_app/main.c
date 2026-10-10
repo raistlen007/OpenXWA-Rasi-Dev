@@ -394,8 +394,8 @@ int main(int argc, char** argv) {
 	}
 	if (!XwaHostConfig_Load(Aeron_GetVfs(), &host_config, config_error, sizeof config_error)) {
 		char message[1536];
-		snprintf(message, sizeof message, "%s\nConfiguration path: %s/config.yaml", config_error,
-				 Aeron_UserPath());
+		snprintf(message, sizeof message, "%s\nConfiguration path: %s/%s", config_error,
+				 Aeron_UserPath(), XWA_HOST_USER_CONFIG_FILENAME);
 		Aeron_LogError("xwa.config", "%s", message);
 		show_setup_error(message);
 		Aeron_Shutdown();
