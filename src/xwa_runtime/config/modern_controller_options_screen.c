@@ -50,6 +50,25 @@ typedef struct ControllerBindingEditState {
 static ControllerCaptureState g_controllerCapture = { -1, -1, -1, 0, { 0 } };
 static ControllerBindingEditState g_controllerBindingEdit;
 static int g_controllerButtonPage;
+static int g_controllerSlot;
+static XwaControllerOptions* ControllerScreen_Options(XwaModernInputOptions* options) {
+	return g_controllerSlot ? &options->controller2 : &options->controller;
+}
+void XwaModernControllerOptionsScreen_SelectSlot(int slot) {
+	g_controllerSlot = slot == 1;
+	XwaModernControllerOptionsScreen_ResetCapture();
+	g_controllerButtonPage = 0;
+}
+
+/* Rising-edge selection avoids latched throttle switches stealing focus. */
+static struct {
+	uint32_t instance_id;
+	int16_t axes[AERON_CONTROLLER_AXIS_MAX];
+	uint8_t hats[AERON_CONTROLLER_HAT_MAX];
+	uint64_t raw_buttons;
+	uint32_t gamepad_buttons;
+	int ready;
+} g_controllerButtonScan;
 static char g_controllerBindingMessage[96];
 static int g_controllerBindingMessageTtl;
 
@@ -106,77 +125,63 @@ static const AeronControllerSnapshot* ControllerScreen_Selected(const AeronContr
 	return controller;
 }
 
-static void ControllerScreen_SelectDevice(AeronControllerSelector* selector, int direction) {
+static void ControllerScreen_SelectDevice(XwaControllerOptions* options, int direction) {
 	const AeronInputSnapshot* input = Aeron_InputSnapshot();
-	const AeronControllerSnapshot* selected;
-	int connected_slots[AERON_CONTROLLER_MAX];
-	int count = 0;
-	int current = 0;
-	int slot;
-	int i;
-
-	if (!input) {
-		memset(selector, 0, sizeof(*selector));
-		return;
-	}
-	selected = Aeron_SelectController(input, selector);
-	for (slot = 0; slot < AERON_CONTROLLER_MAX; ++slot) {
-		if (input->controllers[slot].connected) {
-			connected_slots[count++] = slot;
-			if (&input->controllers[slot] == selected) {
-				current = count;
-			}
-		}
-	}
-	if (selector->guid[0] && current == 0) {
-		current = count + 1;
+	AeronControllerSelector* selector = &options->device;
+	const AeronControllerSnapshot* selected = input && options->enabled
+		? Aeron_SelectController(input, selector) : NULL;
+	int connected_slots[AERON_CONTROLLER_MAX], count = 0, current;
+	if (!input) return;
+	for (int slot = 0; slot < AERON_CONTROLLER_MAX; ++slot)
+		if (input->controllers[slot].connected) connected_slots[count++] = slot;
+	if (!options->enabled) current = 0;
+	else if (!selector->guid[0] && !selector->path[0]) current = 1;
+	else {
+		current = 1;
+		for (int i = 0; i < count; ++i)
+			if (&input->controllers[connected_slots[i]] == selected) current = i + 2;
 	}
 	current += direction < 0 ? -1 : 1;
-	if (current < 0) {
-		current = count;
-	} else if (current > count) {
-		current = 0;
-	}
+	if (current < 0) current = count + 1;
+	if (current > count + 1) current = 0;
 	if (current == 0) {
-		memset(selector, 0, sizeof(*selector));
+		options->enabled = 0;
 		return;
 	}
-	i = connected_slots[current - 1];
-	snprintf(selector->guid, sizeof(selector->guid), "%s", input->controllers[i].guid);
-	snprintf(selector->path, sizeof(selector->path), "%s", input->controllers[i].path);
-	selector->ordinal = ControllerScreen_DeviceOrdinal(input, i);
+	options->enabled = 1;
+	memset(selector, 0, sizeof *selector);
+	if (current == 1) return; /* Automatic */
+	const int slot = connected_slots[current - 2];
+	snprintf(selector->guid, sizeof selector->guid, "%s", input->controllers[slot].guid);
+	snprintf(selector->path, sizeof selector->path, "%s", input->controllers[slot].path);
+	selector->ordinal = ControllerScreen_DeviceOrdinal(input, slot);
 }
 
-static void ControllerScreen_DeviceText(const AeronControllerSelector* selector, char* text, size_t capacity,
+static void ControllerScreen_DeviceText(const XwaControllerOptions* options, char* text, size_t capacity,
 										const AeronControllerSnapshot** selected) {
 	int slot = -1;
-	const AeronControllerSnapshot* controller = ControllerScreen_Selected(selector, &slot);
-
+	const AeronControllerSelector* selector = &options->device;
+	const AeronControllerSnapshot* controller = options->enabled ? ControllerScreen_Selected(selector, &slot) : NULL;
 	*selected = controller;
-	if (!selector->guid[0] && !selector->path[0]) {
-		if (controller) {
-			snprintf(text, capacity, "Automatic: %.42s", controller->name);
-		} else {
-			snprintf(text, capacity, "%s", "Automatic (none connected)");
-		}
+	if (!options->enabled) snprintf(text, capacity, "%s", "None");
+	else if (!selector->guid[0] && !selector->path[0]) {
+		if (controller) snprintf(text, capacity, "Automatic: %.42s", controller->name);
+		else snprintf(text, capacity, "%s", "Automatic (none connected)");
 	} else if (controller) {
 		const AeronInputSnapshot* input = Aeron_InputSnapshot();
 		int duplicate_count;
 		const int ordinal = ControllerScreen_NameOrdinal(input, slot, &duplicate_count);
-		if (duplicate_count > 1) {
+		if (duplicate_count > 1)
 			snprintf(text, capacity, "%.44s #%d", controller->name, ordinal + 1);
-		} else {
-			snprintf(text, capacity, "%.48s", controller->name);
-		}
-	} else {
-		snprintf(text, capacity, "Unavailable: %.32s", selector->guid);
-	}
+		else snprintf(text, capacity, "%.48s", controller->name);
+	} else snprintf(text, capacity, "Unavailable: %.32s", selector->guid);
 }
 
 static XwaControllerProfile* ControllerScreen_Profile(XwaModernInputOptions* options,
-													  const AeronControllerSnapshot* controller) {
-	return controller && controller->kind == AERON_CONTROLLER_KIND_JOYSTICK ? &options->controller.joystick
-																			: &options->controller.gamepad;
+										const AeronControllerSnapshot* controller) {
+	XwaControllerOptions* slot = ControllerScreen_Options(options);
+	return controller && controller->kind == AERON_CONTROLLER_KIND_JOYSTICK
+		? &slot->joystick : &slot->gamepad;
 }
 
 static int ControllerScreen_AxisCount(const AeronControllerSnapshot* controller) {
@@ -429,46 +434,46 @@ XwaModernControllerScreenResult XwaModernControllerOptionsScreen_Update(int menu
 		return XWA_MODERN_CONTROLLER_SCREEN_STAY;
 	}
 	XwaModernInputOptions_Get(&options);
-	ControllerScreen_DeviceText(&options.controller.device, device_text, sizeof(device_text), &selected);
+	ControllerScreen_DeviceText(ControllerScreen_Options(&options), device_text, sizeof(device_text), &selected);
 	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 110, cursor_row, 9);
-	XwaModernOptionsMenu_DrawTitle(&menu, "Controller Setup");
+	XwaModernOptionsMenu_DrawTitle(&menu, g_controllerSlot ? "Controller 2 Setup" : "Controller 1 Setup");
 
 	changed = XwaModernOptionsMenu_DrawValue(&menu, "Active Device", device_text, 100, 0);
 	if (changed) {
-		ControllerScreen_SelectDevice(&options.controller.device, changed);
+		ControllerScreen_SelectDevice(ControllerScreen_Options(&options), changed);
 		XwaModernInputOptions_Set(&options);
 		XwaModernInputOptions_Get(&options);
-		ControllerScreen_DeviceText(&options.controller.device, device_text, sizeof(device_text), &selected);
+		ControllerScreen_DeviceText(ControllerScreen_Options(&options), device_text, sizeof(device_text), &selected);
 	}
 	changed = XwaModernOptionsMenu_DrawValue(&menu, "Roll Enabled",
-											 toggle_text[options.controller.roll_enabled != 0], 101, 0);
+											 toggle_text[ControllerScreen_Options(&options)->roll_enabled != 0], 101, 0);
 	if (changed) {
-		options.controller.roll_enabled = !options.controller.roll_enabled;
+		ControllerScreen_Options(&options)->roll_enabled = !ControllerScreen_Options(&options)->roll_enabled;
 		XwaModernInputOptions_Set(&options);
 	}
 	changed = XwaModernOptionsMenu_DrawValue(&menu, "Rumble Enabled",
-											 toggle_text[options.controller.rumble_enabled != 0], 102, 0);
+											 toggle_text[ControllerScreen_Options(&options)->rumble_enabled != 0], 102, 0);
 	if (changed) {
-		options.controller.rumble_enabled = !options.controller.rumble_enabled;
+		ControllerScreen_Options(&options)->rumble_enabled = !ControllerScreen_Options(&options)->rumble_enabled;
 		XwaModernInputOptions_Set(&options);
 	}
-	snprintf(value, sizeof(value), "%d", options.controller.rumble_strength);
+	snprintf(value, sizeof(value), "%d", ControllerScreen_Options(&options)->rumble_strength);
 	changed = XwaModernOptionsMenu_DrawValue(&menu, "Rumble Strength", value, 103, 0);
 	if (changed) {
-		options.controller.rumble_strength += changed;
-		if (options.controller.rumble_strength < XWA_CONTROLLER_RUMBLE_STRENGTH_MIN) {
-			options.controller.rumble_strength = XWA_CONTROLLER_RUMBLE_STRENGTH_MAX;
-		} else if (options.controller.rumble_strength > XWA_CONTROLLER_RUMBLE_STRENGTH_MAX) {
-			options.controller.rumble_strength = XWA_CONTROLLER_RUMBLE_STRENGTH_MIN;
+		ControllerScreen_Options(&options)->rumble_strength += changed;
+		if (ControllerScreen_Options(&options)->rumble_strength < XWA_CONTROLLER_RUMBLE_STRENGTH_MIN) {
+			ControllerScreen_Options(&options)->rumble_strength = XWA_CONTROLLER_RUMBLE_STRENGTH_MAX;
+		} else if (ControllerScreen_Options(&options)->rumble_strength > XWA_CONTROLLER_RUMBLE_STRENGTH_MAX) {
+			ControllerScreen_Options(&options)->rumble_strength = XWA_CONTROLLER_RUMBLE_STRENGTH_MIN;
 		}
 		XwaModernInputOptions_Set(&options);
 	}
 	pressed = XwaModernOptionsMenu_DrawAction(
-		&menu, "Test Rumble", 104, !selected || !selected->has_rumble || !options.controller.rumble_enabled);
+		&menu, "Test Rumble", 104, !selected || !selected->has_rumble || !ControllerScreen_Options(&options)->rumble_enabled);
 	if (pressed) {
 		const uint16_t magnitude =
-			(uint16_t)(options.controller.rumble_strength * 65535u / XWA_CONTROLLER_RUMBLE_STRENGTH_MAX);
-		XwaControllerMapping_Rumble(magnitude, magnitude, 300);
+			(uint16_t)(ControllerScreen_Options(&options)->rumble_strength * 65535u / XWA_CONTROLLER_RUMBLE_STRENGTH_MAX);
+		XwaControllerMapping_RumbleSlot(g_controllerSlot, magnitude, magnitude, 300);
 	}
 	if (XwaModernOptionsMenu_DrawAction(&menu, "Configure Axes", 105, 0)) {
 		XwaControllerMapping_Rumble(0, 0, 0);
@@ -479,7 +484,7 @@ XwaModernControllerScreenResult XwaModernControllerOptionsScreen_Update(int menu
 		return XWA_MODERN_CONTROLLER_SCREEN_BUTTONS;
 	}
 	if (XwaModernOptionsMenu_DrawAction(&menu, "Restore Controller Defaults", 107, 0)) {
-		XwaModernInputOptions_RestoreControllerDefaults();
+		XwaModernInputOptions_RestoreControllerSlotDefaults(g_controllerSlot);
 	}
 	pressed = XwaModernOptionsMenu_DrawAction(&menu, FrontendString_Get(STR_BACK), 108, 0);
 	pressed |= XwaModernOptionsMenu_TakeEscape(&menu);
@@ -507,7 +512,8 @@ int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row) {
 		return 0;
 	}
 	XwaModernInputOptions_Get(&options);
-	selected = ControllerScreen_Selected(&options.controller.device, NULL);
+	selected = ControllerScreen_Options(&options)->enabled
+		? ControllerScreen_Selected(&ControllerScreen_Options(&options)->device, NULL) : NULL;
 	profile = ControllerScreen_Profile(&options, selected);
 	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 60, cursor_row, 13);
 	if (g_controllerCapture.axis >= 0 && menu.key == XWA_MODERN_MENU_KEY_ESCAPE) {
@@ -515,7 +521,7 @@ int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row) {
 		XwaModernOptionsMenu_TakeEscape(&menu);
 	}
 	ControllerScreen_UpdateAxisCapture(&options, selected);
-	XwaModernOptionsMenu_DrawTitle(&menu, "Controller Axis Mapping");
+	XwaModernOptionsMenu_DrawTitle(&menu, g_controllerSlot ? "Controller 2 Axis Mapping" : "Controller 1 Axis Mapping");
 	for (axis = 0; axis < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++axis) {
 		char source_name[48];
 		const int16_t live = ControllerScreen_Axis(selected, profile->axes[axis].source);
@@ -597,9 +603,9 @@ static void ControllerScreen_DigitalSourceName(const AeronControllerSnapshot* co
 }
 
 static XwaControllerProfile* ControllerScreen_ProfileForKind(XwaModernInputOptions* options,
-															 AeronControllerKind kind) {
-	return kind == AERON_CONTROLLER_KIND_JOYSTICK ? &options->controller.joystick
-												  : &options->controller.gamepad;
+														AeronControllerKind kind) {
+	XwaControllerOptions* slot = ControllerScreen_Options(options);
+	return kind == AERON_CONTROLLER_KIND_JOYSTICK ? &slot->joystick : &slot->gamepad;
 }
 
 static int ControllerScreen_FindButton(const XwaControllerProfile* profile,
@@ -882,8 +888,34 @@ static void ControllerScreen_SelectPressedBinding(const AeronControllerSnapshot*
 		g_controllerCapture.digital_axis >= 0) {
 		return;
 	}
+	/* On entry, baseline held axes and hats. Their levels must not select
+	 * mappings until they cross a threshold or change direction again. */
+	if (!g_controllerButtonScan.ready || g_controllerButtonScan.instance_id != controller->instance_id) {
+		g_controllerButtonScan.ready = 1;
+		g_controllerButtonScan.instance_id = controller->instance_id;
+		for (int a = 0; a < ControllerScreen_AxisCount(controller) && a < AERON_CONTROLLER_AXIS_MAX; ++a)
+			g_controllerButtonScan.axes[a] = ControllerScreen_Axis(controller, a);
+		memcpy(g_controllerButtonScan.hats, controller->raw_hats, sizeof(g_controllerButtonScan.hats));
+		g_controllerButtonScan.raw_buttons = controller->raw_buttons;
+		g_controllerButtonScan.gamepad_buttons = controller->gamepad_buttons;
+		return;
+	}
 	source = ControllerScreen_FirstPressedButton(controller);
+	/* Compare held levels as a fallback if an SDL press pulse was missed. */
+	if (source < 0) {
+		const uint64_t rising = controller->kind == AERON_CONTROLLER_KIND_GAMEPAD
+			? (uint64_t)(controller->gamepad_buttons & ~g_controllerButtonScan.gamepad_buttons)
+			: controller->raw_buttons & ~g_controllerButtonScan.raw_buttons;
+		const int count = controller->kind == AERON_CONTROLLER_KIND_GAMEPAD
+			? AERON_GAMEPAD_BUTTON_COUNT : controller->button_count;
+		for (int b = 0; b < count; ++b)
+			if (rising & (UINT64_C(1) << b)) { source = b; break; }
+	}
 	direction = ControllerScreen_PressedPovDirection(controller, profile);
+	if (controller->kind == AERON_CONTROLLER_KIND_JOYSTICK && profile->pov_source >= 0 &&
+		profile->pov_source < controller->hat_count &&
+		controller->raw_hats[profile->pov_source] == g_controllerButtonScan.hats[profile->pov_source])
+		direction = -1;
 	for (index = 0; index < binding_count; ++index) {
 		const ControllerBindingRow* row = &bindings[index];
 		int active = direction >= 0 && row->pov_direction == direction;
@@ -898,14 +930,24 @@ static void ControllerScreen_SelectPressedBinding(const AeronControllerSnapshot*
 										 : (value < 0 ? (double)-value / 32768.0 : 0.0);
 			const float threshold = row->logical_button >= 0 ? profile->buttons[row->logical_button].threshold
 															 : XWA_CONTROLLER_DIGITAL_THRESHOLD_DEFAULT;
-			active = magnitude >= threshold;
+						const int16_t old = row->source >= 0 && row->source < AERON_CONTROLLER_AXIS_MAX
+										? g_controllerButtonScan.axes[row->source] : 0;
+			const double old_magnitude = row->kind == AERON_CONTROLLER_DIGITAL_AXIS_POSITIVE
+										? (old > 0 ? (double)old / 32767.0 : 0.0)
+										: (old < 0 ? (double)-old / 32768.0 : 0.0);
+			active = magnitude >= threshold && old_magnitude < threshold;
 		}
 		if (active) {
 			g_controllerButtonPage = index / CONTROLLER_PAGE_SIZE;
 			*cursor_row = 1 + index % CONTROLLER_PAGE_SIZE;
-			return;
+			break;
 		}
 	}
+	for (int a = 0; a < ControllerScreen_AxisCount(controller) && a < AERON_CONTROLLER_AXIS_MAX; ++a)
+		g_controllerButtonScan.axes[a] = ControllerScreen_Axis(controller, a);
+	memcpy(g_controllerButtonScan.hats, controller->raw_hats, sizeof(g_controllerButtonScan.hats));
+	g_controllerButtonScan.raw_buttons = controller->raw_buttons;
+	g_controllerButtonScan.gamepad_buttons = controller->gamepad_buttons;
 }
 
 int XwaModernControllerButtonsScreen_Update(int menu_center_x, int* cursor_row) {
@@ -930,7 +972,8 @@ int XwaModernControllerButtonsScreen_Update(int menu_center_x, int* cursor_row) 
 		return 0;
 	}
 	XwaModernInputOptions_Get(&options);
-	selected = ControllerScreen_Selected(&options.controller.device, NULL);
+	selected = ControllerScreen_Options(&options)->enabled
+		? ControllerScreen_Selected(&ControllerScreen_Options(&options)->device, NULL) : NULL;
 	profile = ControllerScreen_Profile(&options, selected);
 	if (ControllerScreen_UpdateDigitalAxisCapture(selected, &captured_binding)) {
 		captured_binding.logical_button =
@@ -972,7 +1015,7 @@ int XwaModernControllerButtonsScreen_Update(int menu_center_x, int* cursor_row) 
 		XwaModernOptionsMenu_TakeEscape(&menu);
 	}
 	ControllerScreen_UpdatePovCapture(&options, selected);
-	XwaModernOptionsMenu_DrawTitle(&menu, "Controller Button Bindings");
+	XwaModernOptionsMenu_DrawTitle(&menu, g_controllerSlot ? "Controller 2 Button Bindings" : "Controller 1 Button Bindings");
 
 	if (selected && selected->kind == AERON_CONTROLLER_KIND_GAMEPAD) {
 		snprintf(value, sizeof(value), "%s", profile->pov_source ? "D-pad" : "Not mapped");

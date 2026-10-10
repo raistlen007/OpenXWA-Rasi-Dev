@@ -102,84 +102,87 @@ static int XwaControllerGamepadPovIsUnambiguous(const XwaControllerProfile* prof
 	return 1;
 }
 
-int XwaModernInputOptions_Validate(const XwaModernInputOptions* options) {
+static int XwaControllerOptions_Validate(const XwaControllerOptions* controller) {
 	size_t guid_length;
 	size_t i;
 
-	if (!options || options->mouse_sensitivity < XWA_MODERN_MOUSE_SENSITIVITY_MIN ||
-		options->mouse_sensitivity > XWA_MODERN_MOUSE_SENSITIVITY_MAX ||
-		options->mouse_mode < XWA_MODERN_MOUSE_MODE_POSITION ||
-		options->mouse_mode > XWA_MODERN_MOUSE_MODE_RATE ||
-		options->controller.rumble_strength < XWA_CONTROLLER_RUMBLE_STRENGTH_MIN ||
-		options->controller.rumble_strength > XWA_CONTROLLER_RUMBLE_STRENGTH_MAX ||
-		(options->head_tracking.source != XWA_HEAD_TRACK_SOURCE_TRACKIR &&
-		 options->head_tracking.source != XWA_HEAD_TRACK_SOURCE_OPENTRACK_UDP) ||
-		options->controller.device.ordinal < 0 ||
-		options->controller.device.ordinal > XWA_CONTROLLER_DEVICE_ORDINAL_MAX ||
-		!memchr(options->controller.device.guid, '\0', sizeof(options->controller.device.guid)) ||
-		!memchr(options->controller.device.path, '\0', sizeof(options->controller.device.path))) {
+	if (!controller || controller->rumble_strength < XWA_CONTROLLER_RUMBLE_STRENGTH_MIN ||
+		controller->rumble_strength > XWA_CONTROLLER_RUMBLE_STRENGTH_MAX ||
+		controller->device.ordinal < 0 ||
+		controller->device.ordinal > XWA_CONTROLLER_DEVICE_ORDINAL_MAX ||
+		!memchr(controller->device.guid, '\0', sizeof(controller->device.guid)) ||
+		!memchr(controller->device.path, '\0', sizeof(controller->device.path))) {
 		return 0;
 	}
-	guid_length = strlen(options->controller.device.guid);
+	guid_length = strlen(controller->device.guid);
 	if (guid_length != 0 && guid_length != 32) {
 		return 0;
 	}
 	if (guid_length == 0 &&
-		(options->controller.device.path[0] != '\0' || options->controller.device.ordinal != 0)) {
+		(controller->device.path[0] != '\0' || controller->device.ordinal != 0)) {
 		return 0;
 	}
 	for (i = 0; i < guid_length; ++i) {
-		if (!isxdigit((unsigned char)options->controller.device.guid[i])) {
+		if (!isxdigit((unsigned char)controller->device.guid[i])) {
 			return 0;
 		}
 	}
-	return XwaControllerProfile_IsValid(&options->controller.gamepad, AERON_GAMEPAD_AXIS_COUNT,
+	return XwaControllerProfile_IsValid(&controller->gamepad, AERON_GAMEPAD_AXIS_COUNT,
 										AERON_GAMEPAD_BUTTON_COUNT, 0, 1) &&
-		   XwaControllerGamepadPovIsUnambiguous(&options->controller.gamepad) &&
-		   XwaControllerProfile_IsValid(&options->controller.joystick, AERON_CONTROLLER_AXIS_MAX,
+		   XwaControllerGamepadPovIsUnambiguous(&controller->gamepad) &&
+		   XwaControllerProfile_IsValid(&controller->joystick, AERON_CONTROLLER_AXIS_MAX,
 										AERON_CONTROLLER_BUTTON_MAX, -1, AERON_CONTROLLER_HAT_MAX - 1);
+}
+
+
+int XwaModernInputOptions_Validate(const XwaModernInputOptions* options) {
+	return options && options->mouse_sensitivity >= XWA_MODERN_MOUSE_SENSITIVITY_MIN &&
+		options->mouse_sensitivity <= XWA_MODERN_MOUSE_SENSITIVITY_MAX &&
+		options->mouse_mode >= XWA_MODERN_MOUSE_MODE_POSITION &&
+		options->mouse_mode <= XWA_MODERN_MOUSE_MODE_RATE &&
+		(options->head_tracking.source == XWA_HEAD_TRACK_SOURCE_TRACKIR ||
+		 options->head_tracking.source == XWA_HEAD_TRACK_SOURCE_OPENTRACK_UDP) &&
+		XwaControllerOptions_Validate(&options->controller) &&
+		XwaControllerOptions_Validate(&options->controller2);
+}
+
+static void XwaControllerOptions_Normalize(XwaControllerOptions* controller) {
+	int i;
+	controller->enabled = controller->enabled != 0;
+	controller->roll_enabled = controller->roll_enabled != 0;
+	controller->rumble_enabled = controller->rumble_enabled != 0;
+	controller->gamepad.pov_source = controller->gamepad.pov_source != 0;
+	for (i = 0; i < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++i) {
+		controller->gamepad.axes[i].invert = controller->gamepad.axes[i].invert != 0;
+		controller->joystick.axes[i].invert = controller->joystick.axes[i].invert != 0;
+	}
+	for (i = 0; i < XWA_CONTROLLER_LOGICAL_BUTTON_COUNT; ++i) {
+		AeronControllerDigitalSource* gamepad = &controller->gamepad.buttons[i];
+		AeronControllerDigitalSource* joystick = &controller->joystick.buttons[i];
+		if (gamepad->kind == AERON_CONTROLLER_DIGITAL_NONE) gamepad->index = 0;
+		if (joystick->kind == AERON_CONTROLLER_DIGITAL_NONE) joystick->index = 0;
+		if (gamepad->kind == AERON_CONTROLLER_DIGITAL_NONE ||
+			gamepad->kind == AERON_CONTROLLER_DIGITAL_BUTTON)
+			gamepad->threshold = XWA_CONTROLLER_DIGITAL_THRESHOLD_DEFAULT;
+		if (joystick->kind == AERON_CONTROLLER_DIGITAL_NONE ||
+			joystick->kind == AERON_CONTROLLER_DIGITAL_BUTTON)
+			joystick->threshold = XWA_CONTROLLER_DIGITAL_THRESHOLD_DEFAULT;
+	}
 }
 
 static void XwaModernInputOptions_Normalize(XwaModernInputOptions* options) {
 	int i;
-
 	options->mouse_flight_enabled = options->mouse_flight_enabled != 0;
 	options->mouse_invert_y = options->mouse_invert_y != 0;
-	options->controller.roll_enabled = options->controller.roll_enabled != 0;
-	options->controller.rumble_enabled = options->controller.rumble_enabled != 0;
 	options->head_tracking.enabled = options->head_tracking.enabled != 0;
 #ifndef _WIN32
-	/* The shipped defaults name native TrackIR for Windows. On other hosts,
-	 * normalize the effective selection to the only available UDP provider,
-	 * even when the user enables tracking without opening the settings menu. */
+	/* Prefer the cross-platform UDP head tracker outside Windows. */
 	options->head_tracking.source = XWA_HEAD_TRACK_SOURCE_OPENTRACK_UDP;
 #endif
-	for (i = 0; i < XWA_HEAD_TRACK_AXIS_COUNT; ++i) {
+	for (i = 0; i < XWA_HEAD_TRACK_AXIS_COUNT; ++i)
 		options->head_tracking.invert[i] = options->head_tracking.invert[i] != 0;
-	}
-	options->controller.gamepad.pov_source = options->controller.gamepad.pov_source != 0;
-	for (i = 0; i < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++i) {
-		options->controller.gamepad.axes[i].invert = options->controller.gamepad.axes[i].invert != 0;
-		options->controller.joystick.axes[i].invert = options->controller.joystick.axes[i].invert != 0;
-	}
-	for (i = 0; i < XWA_CONTROLLER_LOGICAL_BUTTON_COUNT; ++i) {
-		AeronControllerDigitalSource* gamepad = &options->controller.gamepad.buttons[i];
-		AeronControllerDigitalSource* joystick = &options->controller.joystick.buttons[i];
-		if (gamepad->kind == AERON_CONTROLLER_DIGITAL_NONE) {
-			gamepad->index = 0;
-		}
-		if (joystick->kind == AERON_CONTROLLER_DIGITAL_NONE) {
-			joystick->index = 0;
-		}
-		if (gamepad->kind == AERON_CONTROLLER_DIGITAL_NONE ||
-			gamepad->kind == AERON_CONTROLLER_DIGITAL_BUTTON) {
-			gamepad->threshold = XWA_CONTROLLER_DIGITAL_THRESHOLD_DEFAULT;
-		}
-		if (joystick->kind == AERON_CONTROLLER_DIGITAL_NONE ||
-			joystick->kind == AERON_CONTROLLER_DIGITAL_BUTTON) {
-			joystick->threshold = XWA_CONTROLLER_DIGITAL_THRESHOLD_DEFAULT;
-		}
-	}
+	XwaControllerOptions_Normalize(&options->controller);
+	XwaControllerOptions_Normalize(&options->controller2);
 }
 
 static int XwaControllerProfile_AreEqual(const XwaControllerProfile* lhs, const XwaControllerProfile* rhs) {
@@ -204,7 +207,7 @@ static int XwaControllerProfile_AreEqual(const XwaControllerProfile* lhs, const 
 }
 
 static int XwaControllerOptions_AreEqual(const XwaControllerOptions* lhs, const XwaControllerOptions* rhs) {
-	return strcmp(lhs->device.guid, rhs->device.guid) == 0 &&
+	return lhs->enabled == rhs->enabled && strcmp(lhs->device.guid, rhs->device.guid) == 0 &&
 		   strcmp(lhs->device.path, rhs->device.path) == 0 && lhs->device.ordinal == rhs->device.ordinal &&
 		   lhs->roll_enabled == rhs->roll_enabled && lhs->rumble_enabled == rhs->rumble_enabled &&
 		   lhs->rumble_strength == rhs->rumble_strength &&
@@ -220,7 +223,8 @@ static int XwaModernInputOptions_AreEqual(const XwaModernInputOptions* lhs,
 		   lhs->head_tracking.source == rhs->head_tracking.source &&
 		   memcmp(lhs->head_tracking.invert, rhs->head_tracking.invert, sizeof(lhs->head_tracking.invert)) ==
 			   0 &&
-		   XwaControllerOptions_AreEqual(&lhs->controller, &rhs->controller);
+		   XwaControllerOptions_AreEqual(&lhs->controller, &rhs->controller) &&
+		   XwaControllerOptions_AreEqual(&lhs->controller2, &rhs->controller2);
 }
 
 void XwaModernInputOptions_Configure(const XwaModernInputOptions* defaults,
@@ -271,6 +275,15 @@ int XwaModernInputOptions_Set(const XwaModernInputOptions* options) {
 		g_modernInputOptions.apply(&g_modernInputOptions.options);
 	}
 	return 1;
+}
+
+int XwaModernInputOptions_RestoreControllerSlotDefaults(int slot) {
+	XwaModernInputOptions options;
+	if (!g_modernInputOptions.configured || slot < 0 || slot > 1) return 0;
+	options = g_modernInputOptions.options;
+	if (slot == 0) options.controller = g_modernInputOptions.defaults.controller;
+	else options.controller2 = g_modernInputOptions.defaults.controller2;
+	return XwaModernInputOptions_Set(&options);
 }
 
 int XwaModernInputOptions_RestoreControllerDefaults(void) {

@@ -87,6 +87,7 @@ static void apply_modern_input_options(const XwaModernInputOptions* options) {
 	XwaMouseFlight_SetOptions(options);
 	if (options) {
 		XwaControllerMapping_SetOptions(&options->controller);
+		XwaControllerMapping_SetSecondaryOptions(&options->controller2);
 		Config_ApplyModernInputOptions(options);
 	}
 }

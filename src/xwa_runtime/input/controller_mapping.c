@@ -12,8 +12,14 @@ enum {
 typedef struct XwaControllerMappingState {
 	XwaControllerOptions options;
 	int configured;
+	XwaControllerOptions secondary;
+	int secondary_configured;
 	uint32_t previous_instance_id;
-	uint32_t digital_axis_buttons;
+	uint32_t previous_secondary_id;
+	uint64_t digital_axis_buttons[2];
+	uint64_t pending_buttons[2];
+	int previous_pov[2];
+	uint32_t actions_instance_id[2];
 } XwaControllerMappingState;
 
 static XwaControllerMappingState g_controllerMapping;
@@ -40,20 +46,35 @@ static int ControllerMapping_ProfileEqual(const XwaControllerProfile* lhs, const
 }
 
 static int ControllerMapping_OptionsEqual(const XwaControllerOptions* lhs, const XwaControllerOptions* rhs) {
-	return strcmp(lhs->device.guid, rhs->device.guid) == 0 &&
+	return lhs->enabled == rhs->enabled && strcmp(lhs->device.guid, rhs->device.guid) == 0 &&
 		   strcmp(lhs->device.path, rhs->device.path) == 0 && lhs->device.ordinal == rhs->device.ordinal &&
 		   lhs->rumble_enabled == rhs->rumble_enabled &&
 		   ControllerMapping_ProfileEqual(&lhs->gamepad, &rhs->gamepad) &&
 		   ControllerMapping_ProfileEqual(&lhs->joystick, &rhs->joystick);
 }
 
-const AeronControllerSnapshot* XwaControllerMapping_SelectedController(void) {
+const AeronControllerSnapshot* XwaControllerMapping_ControllerForSlot(int slot) {
 	const AeronInputSnapshot* input = Aeron_InputSnapshot();
-
-	if (!input || !g_controllerMapping.configured) {
-		return NULL;
+	const XwaControllerOptions* options;
+	const AeronControllerSnapshot* controller;
+	if (!input || slot < 0 || slot > 1) return NULL;
+	if (slot == 0) {
+		if (!g_controllerMapping.configured) return NULL;
+		options = &g_controllerMapping.options;
+	} else {
+		if (!g_controllerMapping.secondary_configured) return NULL;
+		options = &g_controllerMapping.secondary;
 	}
-	return Aeron_SelectController(input, &g_controllerMapping.options.device);
+	if (!options->enabled) return NULL;
+	controller = Aeron_SelectController(input, &options->device);
+	if (slot == 1 && controller && controller == XwaControllerMapping_ControllerForSlot(0))
+		return NULL; /* Never apply the same device twice. */
+	return controller;
+}
+
+const AeronControllerSnapshot* XwaControllerMapping_SelectedController(void) {
+	const AeronControllerSnapshot* first = XwaControllerMapping_ControllerForSlot(0);
+	return first ? first : XwaControllerMapping_ControllerForSlot(1);
 }
 
 static const XwaControllerProfile* ControllerMapping_Profile(const XwaControllerOptions* options,
@@ -164,7 +185,8 @@ static int ControllerMapping_HasPov(const AeronControllerSnapshot* controller,
 	return profile->pov_source >= 0 && profile->pov_source < controller->hat_count;
 }
 
-static void ControllerMapping_LogUnavailableSources(const AeronControllerSnapshot* controller) {
+static void ControllerMapping_LogUnavailableSources(const AeronControllerSnapshot* controller,
+											 const XwaControllerOptions* options) {
 	const XwaControllerProfile* profile;
 	int unavailable_axes = 0;
 	int unavailable_buttons = 0;
@@ -174,7 +196,7 @@ static void ControllerMapping_LogUnavailableSources(const AeronControllerSnapsho
 	if (!controller || controller->kind != AERON_CONTROLLER_KIND_JOYSTICK) {
 		return;
 	}
-	profile = &g_controllerMapping.options.joystick;
+	profile = &options->joystick;
 	for (i = 0; i < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++i) {
 		unavailable_axes += profile->axes[i].source >= controller->axis_count;
 	}
@@ -199,7 +221,7 @@ static void ControllerMapping_LogUnavailableSources(const AeronControllerSnapsho
 
 static void ControllerMapping_MapSnapshot(const XwaControllerOptions* options,
 										  const AeronControllerSnapshot* controller, int has_focus,
-										  uint32_t previous_axis_buttons, uint32_t* axis_buttons,
+										  uint64_t previous_axis_buttons, uint64_t* axis_buttons,
 										  XwaControllerLogicalState* state) {
 	const XwaControllerProfile* profile;
 	int logical;
@@ -222,6 +244,8 @@ static void ControllerMapping_MapSnapshot(const XwaControllerOptions* options,
 	profile = ControllerMapping_Profile(options, controller);
 	state->has_pov = ControllerMapping_HasPov(controller, profile);
 	for (logical = 0; logical < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++logical) {
+		/* Per-device Roll Enabled must not block another device's roll axis. */
+		if (logical == XWA_CONTROLLER_AXIS_ROLL && !options->roll_enabled) continue;
 		const XwaControllerAxisBinding* binding = &profile->axes[logical];
 		const int16_t value = ControllerMapping_AxisValue(controller, binding->source);
 		state->source_axes[logical] = (int8_t)binding->source;
@@ -239,9 +263,9 @@ static void ControllerMapping_MapSnapshot(const XwaControllerOptions* options,
 	}
 	for (logical = 0; logical < XWA_CONTROLLER_LOGICAL_BUTTON_COUNT; ++logical) {
 		const AeronControllerDigitalSource* binding = &profile->buttons[logical];
-		const uint32_t bit = 1u << logical;
+		const uint64_t bit = UINT64_C(1) << logical;
 		if (Aeron_ControllerDigitalSourceDown(controller, binding, (previous_axis_buttons & bit) != 0)) {
-			state->buttons |= 1u << logical;
+			state->buttons |= UINT64_C(1) << logical;
 			if (axis_buttons && binding->kind != AERON_CONTROLLER_DIGITAL_BUTTON) {
 				*axis_buttons |= bit;
 			}
@@ -257,28 +281,33 @@ void XwaControllerMapping_MapSnapshot(const XwaControllerOptions* options,
 }
 
 void XwaControllerMapping_SetOptions(const XwaControllerOptions* options) {
-	const uint32_t old_instance_id = XwaControllerMapping_SelectedInstanceId();
-	const uint32_t previous_instance_id = g_controllerMapping.previous_instance_id;
-
 	if (options && g_controllerMapping.configured &&
-		ControllerMapping_OptionsEqual(options, &g_controllerMapping.options)) {
+		ControllerMapping_OptionsEqual(options, &g_controllerMapping.options))
 		return;
-	}
-	if (old_instance_id != 0) {
-		Aeron_RumbleController(old_instance_id, 0, 0, 0);
-	}
-	memset(&g_controllerMapping, 0, sizeof(g_controllerMapping));
-	/* Option changes must not masquerade as physical device changes. */
-	g_controllerMapping.previous_instance_id = previous_instance_id;
-	if (!options) {
+	if (g_controllerMapping.previous_instance_id)
+		Aeron_RumbleController(g_controllerMapping.previous_instance_id, 0, 0, 0);
+	if (options) g_controllerMapping.options = *options;
+	else memset(&g_controllerMapping.options, 0, sizeof g_controllerMapping.options);
+	g_controllerMapping.configured = options != NULL;
+	g_controllerMapping.digital_axis_buttons[0] = 0;
+	g_controllerMapping.pending_buttons[0] = 0;
+	g_controllerMapping.previous_pov[0] = -1;
+	g_controllerMapping.actions_instance_id[0] = 0;
+}
+
+void XwaControllerMapping_SetSecondaryOptions(const XwaControllerOptions* options) {
+	if (options && g_controllerMapping.secondary_configured &&
+		ControllerMapping_OptionsEqual(options, &g_controllerMapping.secondary))
 		return;
-	}
-	g_controllerMapping.options = *options;
-	g_controllerMapping.configured = 1;
-	if ((options->device.guid[0] || options->device.path[0]) && !XwaControllerMapping_SelectedController()) {
-		Aeron_LogWarn("xwa.input", "Configured controller is unavailable (GUID '%s', path '%s', ordinal %d)",
-					  options->device.guid, options->device.path, options->device.ordinal);
-	}
+	if (g_controllerMapping.previous_secondary_id)
+		Aeron_RumbleController(g_controllerMapping.previous_secondary_id, 0, 0, 0);
+	if (options) g_controllerMapping.secondary = *options;
+	else memset(&g_controllerMapping.secondary, 0, sizeof g_controllerMapping.secondary);
+	g_controllerMapping.secondary_configured = options != NULL;
+	g_controllerMapping.digital_axis_buttons[1] = 0;
+	g_controllerMapping.pending_buttons[1] = 0;
+	g_controllerMapping.previous_pov[1] = -1;
+	g_controllerMapping.actions_instance_id[1] = 0;
 }
 
 uint32_t XwaControllerMapping_SelectedInstanceId(void) {
@@ -291,61 +320,143 @@ int XwaControllerMapping_SelectedHasRumble(void) {
 	return controller && controller->has_rumble;
 }
 
-int XwaControllerMapping_Rumble(uint16_t low_frequency_rumble, uint16_t high_frequency_rumble,
-								uint32_t duration_ms) {
-	const AeronControllerSnapshot* controller = XwaControllerMapping_SelectedController();
-	const int stopping = (low_frequency_rumble == 0 && high_frequency_rumble == 0) || duration_ms == 0;
+int XwaControllerMapping_RumbleSlot(int slot, uint16_t low, uint16_t high, uint32_t duration_ms) {
+	const AeronControllerSnapshot* controller = XwaControllerMapping_ControllerForSlot(slot);
+	const XwaControllerOptions* opts = slot == 1 ? &g_controllerMapping.secondary : &g_controllerMapping.options;
+	if (!controller || !controller->has_rumble) return 0;
+	if (!opts->rumble_enabled && (low || high)) return 0;
+	return Aeron_RumbleController(controller->instance_id, low, high, duration_ms);
+}
 
-	if (!controller || !controller->has_rumble) {
-		if (!stopping) {
-			Aeron_LogWarn("xwa.input", "Rumble requested while the selected controller is %s",
-						  controller ? "unsupported" : "disconnected");
-		}
-		return 0;
-	}
-	if (!stopping && !g_controllerMapping.options.rumble_enabled) {
-		return 0;
-	}
-	return Aeron_RumbleController(controller->instance_id, low_frequency_rumble, high_frequency_rumble,
-								  duration_ms);
+int XwaControllerMapping_Rumble(uint16_t low, uint16_t high, uint32_t duration_ms) {
+	return XwaControllerMapping_RumbleSlot(XwaControllerMapping_ControllerForSlot(0) ? 0 : 1,
+										 low, high, duration_ms);
 }
 
 int XwaControllerMapping_ConsumeSelectionChange(void) {
-	const uint32_t instance_id = XwaControllerMapping_SelectedInstanceId();
-	if (instance_id == g_controllerMapping.previous_instance_id) {
-		return 0;
+	int changed = 0;
+	for (int slot = 0; slot < 2; ++slot) {
+		const AeronControllerSnapshot* controller = XwaControllerMapping_ControllerForSlot(slot);
+		uint32_t id = controller ? controller->instance_id : 0;
+		uint32_t* previous = slot ? &g_controllerMapping.previous_secondary_id
+									 : &g_controllerMapping.previous_instance_id;
+		if (id == *previous) continue;
+		if (*previous) Aeron_RumbleController(*previous, 0, 0, 0);
+		Aeron_LogInfo("xwa.input", "Controller %d changed from %u to %u", slot + 1, *previous, id);
+		*previous = id;
+		g_controllerMapping.digital_axis_buttons[slot] = 0;
+		g_controllerMapping.pending_buttons[slot] = 0;
+		g_controllerMapping.previous_pov[slot] = -1;
+		if (controller) ControllerMapping_LogUnavailableSources(controller,
+										 slot ? &g_controllerMapping.secondary : &g_controllerMapping.options);
+		changed = 1;
 	}
-	if (g_controllerMapping.previous_instance_id != 0) {
-		Aeron_RumbleController(g_controllerMapping.previous_instance_id, 0, 0, 0);
-	}
-	Aeron_LogInfo("xwa.input", "Active controller changed from %u to %u",
-				  g_controllerMapping.previous_instance_id, instance_id);
-	g_controllerMapping.previous_instance_id = instance_id;
-	g_controllerMapping.digital_axis_buttons = 0;
-	ControllerMapping_LogUnavailableSources(XwaControllerMapping_SelectedController());
-	return 1;
+	return changed;
 }
 
 int XwaControllerMapping_GetState(XwaControllerLogicalState* state) {
 	const AeronInputSnapshot* input = Aeron_InputSnapshot();
-	const AeronControllerSnapshot* controller = XwaControllerMapping_SelectedController();
-
-	ControllerMapping_MapSnapshot(&g_controllerMapping.options, controller, input && input->has_focus,
-								  g_controllerMapping.digital_axis_buttons,
-								  &g_controllerMapping.digital_axis_buttons, state);
-	return controller != NULL;
+	int found = 0;
+	if (!state) return 0;
+	memset(state, 0, sizeof *state);
+	state->pov_direction = -1;
+	for (int i = 0; i < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++i) {
+		state->axes[i] = CONTROLLER_AXIS_CENTER;
+		state->source_axes[i] = -1;
+	}
+	for (int slot = 0; slot < 2; ++slot) {
+		const AeronControllerSnapshot* controller = XwaControllerMapping_ControllerForSlot(slot);
+		const XwaControllerOptions* options = slot ? &g_controllerMapping.secondary : &g_controllerMapping.options;
+		XwaControllerLogicalState current;
+		if (!controller) continue;
+		found = 1;
+		ControllerMapping_MapSnapshot(options, controller, input && input->has_focus,
+									 g_controllerMapping.digital_axis_buttons[slot],
+									 &g_controllerMapping.digital_axis_buttons[slot], &current);
+		for (int axis = 0; axis < XWA_CONTROLLER_LOGICAL_AXIS_COUNT; ++axis) {
+			if (state->source_axes[axis] == -1 && current.source_axes[axis] >= 0) {
+				state->axes[axis] = current.axes[axis];
+				state->source_axes[axis] = current.source_axes[axis];
+				state->source_axis_values[axis] = current.source_axis_values[axis];
+			}
+		}
+		state->buttons |= current.buttons;
+		if (!state->has_pov && current.has_pov) {
+			state->has_pov = 1;
+			state->pov_direction = current.pov_direction;
+		}
+	}
+	return found;
 }
 
-void XwaControllerMapping_CopySelectedActions(uint16_t actions[XWA_CONTROLLER_ACTION_COUNT]) {
-	const AeronControllerSnapshot* controller;
-	const XwaControllerProfile* profile;
+void XwaControllerMapping_CopySelectedActions(uint16_t actions[20]) {
+	const AeronControllerSnapshot* controller = XwaControllerMapping_SelectedController();
+	const XwaControllerOptions* opts = XwaControllerMapping_ControllerForSlot(0)
+										 ? &g_controllerMapping.options : &g_controllerMapping.secondary;
+	const XwaControllerProfile* profile =
+		controller && controller->kind == AERON_CONTROLLER_KIND_JOYSTICK ? &opts->joystick : &opts->gamepad;
+	if (!actions) return;
+	for (int i = 0; i < 16; ++i) actions[i] = profile->actions[i];
+	for (int i = 0; i < 4; ++i) actions[16+i] = profile->actions[XWA_CONTROLLER_LOGICAL_BUTTON_COUNT+i];
+}
 
-	if (!actions) {
-		return;
+/* All modern controller actions (64 buttons plus POV on each physical device)
+ * are translated independently of WinMM's 16-button compatibility mask.
+ * A held switch contributes modifiers, but ordinary actions fire on a fresh
+ * press only; a keyboard key already in flight retains priority. */
+void XwaControllerMapping_ReadActions(uint16_t* key, int* key_mods) {
+	const AeronInputSnapshot* input = Aeron_InputSnapshot();
+	if (!key || !key_mods || !input || !input->has_focus) return;
+	for (int slot = 0; slot < 2; ++slot) {
+		const AeronControllerSnapshot* controller = XwaControllerMapping_ControllerForSlot(slot);
+		const XwaControllerOptions* options = slot ? &g_controllerMapping.secondary : &g_controllerMapping.options;
+		const XwaControllerProfile* profile;
+		XwaControllerLogicalState state;
+		uint64_t previous, accepted = 0;
+		int direction;
+		if (!controller) {
+			g_controllerMapping.pending_buttons[slot] = 0;
+			g_controllerMapping.previous_pov[slot] = -1;
+			g_controllerMapping.actions_instance_id[slot] = 0;
+			continue;
+		}
+		profile = ControllerMapping_Profile(options, controller);
+		ControllerMapping_MapSnapshot(options, controller, 1, g_controllerMapping.digital_axis_buttons[slot],
+									 NULL, &state);
+		/* On connection, do not synthesize presses from latching controls
+		 * that were already on before the game/input device became active. */
+		if (g_controllerMapping.actions_instance_id[slot] != controller->instance_id) {
+			g_controllerMapping.actions_instance_id[slot] = controller->instance_id;
+			g_controllerMapping.pending_buttons[slot] = state.buttons;
+			g_controllerMapping.previous_pov[slot] = state.pov_direction;
+		}
+		previous = g_controllerMapping.pending_buttons[slot];
+		for (int i = 0; i < XWA_CONTROLLER_LOGICAL_BUTTON_COUNT; ++i) {
+			const uint64_t bit = UINT64_C(1) << i;
+			const uint16_t action = profile->actions[i];
+			if (!(state.buttons & bit)) continue;
+			if (action == 156) *key_mods |= 1;
+			else if (action == 157) *key_mods |= 2;
+			else if (action && (action == 180 || action == 182 || action == 184 || action == 186 ||
+							!(previous & bit))) {
+				if (!*key) {
+					*key = action;
+					accepted |= bit;
+				}
+			}
+		}
+		g_controllerMapping.pending_buttons[slot] = (state.buttons & previous) | accepted;
+		/* All released bits are cleared; modifiers are level-sensitive. */
+		direction = state.has_pov ? state.pov_direction : -1;
+		if (direction >= 0) {
+			const uint16_t action = profile->actions[XWA_CONTROLLER_LOGICAL_BUTTON_COUNT + direction];
+			if (action == 156) *key_mods |= 1;
+			else if (action == 157) *key_mods |= 2;
+			else if (action && (direction != g_controllerMapping.previous_pov[slot] ||
+							 action == 180 || action == 182 || action == 184 || action == 186)) {
+				if (!*key) *key = action;
+			}
+		}
+		g_controllerMapping.previous_pov[slot] = direction;
 	}
-	controller = XwaControllerMapping_SelectedController();
-	profile = controller && controller->kind == AERON_CONTROLLER_KIND_JOYSTICK
-				  ? &g_controllerMapping.options.joystick
-				  : &g_controllerMapping.options.gamepad;
-	memcpy(actions, profile->actions, sizeof(profile->actions));
 }

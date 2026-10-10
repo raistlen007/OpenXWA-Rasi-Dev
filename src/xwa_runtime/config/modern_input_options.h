@@ -16,8 +16,8 @@ enum {
 	XWA_MODERN_MOUSE_SENSITIVITY_MIN = 1,
 	XWA_MODERN_MOUSE_SENSITIVITY_MAX = 9,
 	XWA_CONTROLLER_LOGICAL_AXIS_COUNT = 4,
-	XWA_CONTROLLER_LOGICAL_BUTTON_COUNT = 16,
-	XWA_CONTROLLER_ACTION_COUNT = 20,
+	XWA_CONTROLLER_LOGICAL_BUTTON_COUNT = 64,
+	XWA_CONTROLLER_ACTION_COUNT = XWA_CONTROLLER_LOGICAL_BUTTON_COUNT + 4,
 	XWA_CONTROLLER_RUMBLE_STRENGTH_MIN = 0,
 	XWA_CONTROLLER_RUMBLE_STRENGTH_MAX = 8,
 	XWA_CONTROLLER_DEVICE_ORDINAL_MAX = 15,
@@ -59,6 +59,8 @@ typedef struct XwaControllerProfile {
 } XwaControllerProfile;
 
 typedef struct XwaControllerOptions {
+	/* An empty device GUID means Automatic only while enabled. */
+	int enabled;
 	AeronControllerSelector device;
 	int roll_enabled;
 	int rumble_enabled;
@@ -96,6 +98,7 @@ typedef struct XwaModernInputOptions {
 	int mouse_sensitivity;
 	int mouse_invert_y;
 	XwaControllerOptions controller;
+	XwaControllerOptions controller2;
 	XwaHeadTrackingOptions head_tracking;
 } XwaModernInputOptions;
 
@@ -111,6 +114,7 @@ void XwaModernInputOptions_Get(XwaModernInputOptions* out);
 void XwaModernInputOptions_GetDefaults(XwaModernInputOptions* out);
 int XwaModernInputOptions_Set(const XwaModernInputOptions* options);
 int XwaModernInputOptions_RestoreControllerDefaults(void);
+int XwaModernInputOptions_RestoreControllerSlotDefaults(int slot);
 int XwaModernInputOptions_Flush(void);
 int XwaModernInputOptions_IsDirty(void);
 

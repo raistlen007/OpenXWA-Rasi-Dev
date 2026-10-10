@@ -33,7 +33,7 @@ int XwaModernInputOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	sensitivity = (uint8_t)(options.mouse_sensitivity - XWA_MODERN_MOUSE_SENSITIVITY_MIN);
 	invert_y = (uint8_t)(options.mouse_invert_y != 0);
 	changed = 0;
-	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 145, cursor_row, 7);
+	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 135, cursor_row, 8);
 	XwaModernOptionsMenu_DrawTitle(&menu, FrontendString_Get(STR_CONFIG_GAME_CONTROLLER_OPTIONS));
 
 	changed |= XwaModernOptionsMenu_DrawCycleU8(&menu, &mouse_flight, "Mouse Flight Control", toggle_texts, 2,
@@ -53,8 +53,11 @@ int XwaModernInputOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	}
 
 	result = 0;
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Controller Setup", 75, 0)) {
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Controller 1 Setup", 75, 0)) {
 		result = 2;
+	}
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Controller 2 Setup", 77, 0)) {
+		result = 4;
 	}
 	if (XwaModernOptionsMenu_DrawAction(&menu, "Head Tracking Setup", 76, 0)) {
 		result = 3;

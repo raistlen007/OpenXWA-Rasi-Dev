@@ -12,6 +12,7 @@ typedef enum XwaModernControllerScreenResult {
 	XWA_MODERN_CONTROLLER_SCREEN_BUTTONS,
 } XwaModernControllerScreenResult;
 
+void XwaModernControllerOptionsScreen_SelectSlot(int slot);
 XwaModernControllerScreenResult XwaModernControllerOptionsScreen_Update(int menu_center_x, int* cursor_row);
 int XwaModernControllerAxesScreen_Update(int menu_center_x, int* cursor_row);
 int XwaModernControllerButtonsScreen_Update(int menu_center_x, int* cursor_row);

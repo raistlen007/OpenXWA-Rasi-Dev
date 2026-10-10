@@ -12,7 +12,7 @@ extern "C" {
 
 typedef struct XwaControllerLogicalState {
 	uint32_t axes[XWA_CONTROLLER_LOGICAL_AXIS_COUNT];
-	uint32_t buttons;
+	uint64_t buttons;
 	int pov_direction; /* -1 centered, otherwise up/right/down/left = 0..3. */
 	int has_pov;
 	int8_t source_axes[XWA_CONTROLLER_LOGICAL_AXIS_COUNT];
@@ -20,6 +20,10 @@ typedef struct XwaControllerLogicalState {
 } XwaControllerLogicalState;
 
 void XwaControllerMapping_SetOptions(const XwaControllerOptions* options);
+void XwaControllerMapping_SetSecondaryOptions(const XwaControllerOptions* options);
+const AeronControllerSnapshot* XwaControllerMapping_ControllerForSlot(int slot);
+int XwaControllerMapping_RumbleSlot(int slot, uint16_t low, uint16_t high, uint32_t duration_ms);
+void XwaControllerMapping_ReadActions(uint16_t* key, int* key_mods);
 const AeronControllerSnapshot* XwaControllerMapping_SelectedController(void);
 uint32_t XwaControllerMapping_SelectedInstanceId(void);
 int XwaControllerMapping_SelectedHasRumble(void);
@@ -27,7 +31,7 @@ int XwaControllerMapping_Rumble(uint16_t low_frequency_rumble, uint16_t high_fre
 								uint32_t duration_ms);
 int XwaControllerMapping_ConsumeSelectionChange(void);
 int XwaControllerMapping_GetState(XwaControllerLogicalState* state);
-void XwaControllerMapping_CopySelectedActions(uint16_t actions[XWA_CONTROLLER_ACTION_COUNT]);
+void XwaControllerMapping_CopySelectedActions(uint16_t actions[20]);
 
 /* Pure conversion entry point used by the runtime facade and unit tests. */
 void XwaControllerMapping_MapSnapshot(const XwaControllerOptions* options,
