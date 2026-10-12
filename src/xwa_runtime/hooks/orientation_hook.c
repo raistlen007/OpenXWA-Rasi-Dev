@@ -6,9 +6,6 @@
 
 #define XWA_ORIENTATION_PI 3.14159265358979323846f
 #define XWA_ORIENTATION_HALF_PI (XWA_ORIENTATION_PI * 0.5f)
-/* XWA's Q16/BAM turn has 65536 units, not 65534. Dividing by 32767
- * biases round-trip conversion and turns repeated pitch into phantom
- * yaw/roll. Preserve the exact 32768-unit half turn. */
 #define XWA_ORIENTATION_BAM_TO_RAD (XWA_ORIENTATION_PI / 32768.0f)
 #define XWA_ORIENTATION_RAD_TO_BAM (32768.0f / XWA_ORIENTATION_PI)
 #define XWA_ORIENTATION_GIMBAL_EPSILON 1.0e-5f
@@ -16,17 +13,7 @@
 static float XwaOrientation_ClampRadians(float angle) { return atan2f(sinf(angle), cosf(angle)); }
 
 static int XwaOrientation_RoundAngle(float angle) {
-	/* The half-turn endpoint (+/-32768) is representable after Q16 wrap,
-	 * and must never be clamped to +/-32767. */
 	return (int)roundf(angle);
-}
-
-static uint64_t XwaOrientation_BranchDistance(XwaOrientationAngles a, XwaOrientationAngles previous) {
-	/* Each delta is the shortest signed Q16 distance, including wraparound. */
-	const int64_t dyaw = (int16_t)(uint16_t)(a.yaw - previous.yaw);
-	const int64_t dpitch = (int16_t)(uint16_t)(a.pitch - previous.pitch);
-	const int64_t droll = (int16_t)(uint16_t)(a.roll - previous.roll);
-	return (uint64_t)(dyaw * dyaw + dpitch * dpitch + droll * droll);
 }
 
 static void XwaOrientation_ToRadians(XwaOrientationAngles angles, float* pitch, float* yaw, float* roll) {
@@ -36,33 +23,23 @@ static void XwaOrientation_ToRadians(XwaOrientationAngles angles, float* pitch, 
 	*roll = XwaOrientation_ClampRadians(-(float)(int16_t)angles.roll * XWA_ORIENTATION_BAM_TO_RAD);
 }
 
-static XwaOrientationAngles XwaOrientation_FromRadians(float pitch, float yaw, float roll,
-											 XwaOrientationAngles previous) {
-	XwaOrientationAngles direct;
-	XwaOrientationAngles equivalent;
-	const int headingXY =
-		XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-yaw) * XWA_ORIENTATION_RAD_TO_BAM);
-	const int headingZ =
-		XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-XWA_ORIENTATION_HALF_PI - pitch) *
-											 XWA_ORIENTATION_RAD_TO_BAM);
-	const int headingRoll =
-		XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-roll) * XWA_ORIENTATION_RAD_TO_BAM);
+static XwaOrientationAngles XwaOrientation_FromRadians(float pitch, float yaw, float roll) {
+	XwaOrientationAngles result;
+	int headingXY;
+	int headingZ;
+	int headingRoll;
 
-	/* The native orientation has two equivalent Euler branches: (yaw, pitch,
-	 * roll) and (yaw+180, -pitch, roll+180). The previous implementation
-	 * always selected the second branch, causing needless 180-degree angle
-	 * jumps (including for pitch-only input) and visible interpolation drift.
-	 * Select the representation closest to the preceding native angles. */
-	direct.yaw = (Q16Angle)(uint16_t)headingXY;
-	direct.pitch = (Q16Angle)(uint16_t)headingZ;
-	direct.roll = (Q16Angle)(uint16_t)headingRoll;
-	equivalent.yaw = (Q16Angle)(uint16_t)(headingXY + 0x8000);
-	equivalent.pitch = (Q16Angle)(uint16_t)-headingZ;
-	equivalent.roll = (Q16Angle)(uint16_t)(headingRoll + 0x8000);
-	return XwaOrientation_BranchDistance(direct, previous) <=
-				   XwaOrientation_BranchDistance(equivalent, previous)
-			? direct
-			: equivalent;
+	headingXY = XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-yaw) * XWA_ORIENTATION_RAD_TO_BAM);
+	headingZ = XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-XWA_ORIENTATION_HALF_PI - pitch) *
+										 XWA_ORIENTATION_RAD_TO_BAM);
+	headingRoll = XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-roll) * XWA_ORIENTATION_RAD_TO_BAM);
+
+	/* The hook selects the equivalent XWA Euler representation offset by
+	 * half a turn in yaw and roll. */
+	result.yaw = (Q16Angle)((uint16_t)headingXY + 0x8000u);
+	result.pitch = (Q16Angle)(uint16_t)(-headingZ);
+	result.roll = (Q16Angle)((uint16_t)headingRoll + 0x8000u);
+	return result;
 }
 
 /*
@@ -198,12 +175,6 @@ XwaOrientationAngles XwaOrientation_ApplyPitchYaw(XwaOrientationAngles current, 
 	float yaw;
 	float roll;
 
-	/* No rotation means no new Euler decomposition. In particular, never
-	 * re-encode an unchanged attitude near a gimbal singularity. */
-	if (pitchDeltaQ16 == 0 && negYawDeltaQ16 == 0) {
-		return current;
-	}
-
 	XwaOrientation_ToRadians(current, &pitch, &yaw, &roll);
 	XwaOrientation_RotateLocal(matrix, 1, yaw);
 	XwaOrientation_RotateLocal(matrix, 0, pitch);
@@ -214,5 +185,5 @@ XwaOrientationAngles XwaOrientation_ApplyPitchYaw(XwaOrientationAngles current, 
 
 	XwaOrientation_MatrixToQuaternion(matrix, quaternion);
 	XwaOrientation_QuaternionToEuler(quaternion, &pitch, &yaw, &roll);
-	return XwaOrientation_FromRadians(pitch, yaw, roll, current);
+	return XwaOrientation_FromRadians(pitch, yaw, roll);
 }
