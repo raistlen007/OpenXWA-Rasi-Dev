@@ -325,7 +325,8 @@ static uint32_t hyper_streak_visual_seed(const XwaHyperspaceStreak* streak) {
 }
 
 static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak* streak, float extent,
-							  float transition_y, const float camera_rows[9], float x_scale) {
+							  float transition_y, const float camera_rows[9], float x_scale,
+							  int supplemental) {
 	XwaFlightObject synthetic;
 	memset(&synthetic, 0, sizeof synthetic);
 	synthetic.orient_dirty = 1;
@@ -338,31 +339,60 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	/* The 1977 film uses much finer, unevenly spaced blue-white light trails. */
 	const uint32_t variation = hyper_streak_visual_seed(streak);
 	const float width_jitter = (float)(variation & 255u) / 255.0f;
-	const float length_jitter = (float)((variation >> 8) & 255u) / 255.0f;
 	const float brightness_jitter = (float)((variation >> 16) & 255u) / 255.0f;
 	const float width_scale = 0.26f + 0.17f * width_jitter;
 	const float half = (float)streak->half_width * model_units_to_meters * width_scale;
-	extent *= model_units_to_meters * (0.80f + 0.20f * length_jitter);
-	/* Film-style white-blue highlights with clearly distinguishable blue-violet
-	 * streaks. Avoid clipped whites when several additive quads overlap. */
+
+	/* Treat each existing radial streak as a bounded part of a zoom exposure.
+	 * Its perspective projection already makes trails farther from the axis
+	 * appear longer. A modest radius dependence reinforces that relationship
+	 * without squaring it or changing the original transition timing.
+	 *
+	 * Stable shutter intervals create black gaps between separate light trails.
+	 * The supplemental inner streaks start closer to the vanishing point. */
+	uint32_t shutter_hash = variation ^ (variation >> 16);
+	shutter_hash *= 0x7feb352du;
+	shutter_hash ^= shutter_hash >> 15;
+	shutter_hash *= 0x846ca68bu;
+	shutter_hash ^= shutter_hash >> 16;
+	const float start_jitter = (float)(shutter_hash & 65535u) / 65535.0f;
+	const float duration_jitter = (float)(shutter_hash >> 16) / 65535.0f;
+	const float offset_x = (float)streak->offset[0];
+	const float offset_z = (float)streak->offset[2];
+	const float radius = sqrtf(offset_x * offset_x + offset_z * offset_z);
+	const float radial_weight = radius / (radius + 4096.0f);
+	const float shutter_start = (supplemental ? 0.02f : 0.07f) +
+								(supplemental ? 0.38f : 0.53f) * start_jitter;
+	const float shutter_duration = (0.24f + 0.40f * duration_jitter) *
+									(0.68f + 0.47f * radial_weight);
+	const float shutter_end = fminf(0.97f, shutter_start + shutter_duration);
+	const float visible_span = shutter_end - shutter_start;
+	const float exposure_start = extent * model_units_to_meters * shutter_start;
+	const float exposure_end = extent * model_units_to_meters * shutter_end;
+
+	/* A long optical smear spreads a star's energy over more pixels. */
+	const float exposure_brightness =
+		fminf(1.12f, fmaxf(0.72f, sqrtf(0.38f / fmaxf(visible_span, 0.12f))));
+	/* The original optical look leans lavender-white rather than icy blue. */
 	static const float film_tints[8][3] = {
-		{ 0.93f, 0.95f, 1.00f },
-		{ 0.72f, 0.84f, 1.00f },
-		{ 0.50f, 0.69f, 1.00f },
-		{ 0.34f, 0.52f, 1.00f },
-		{ 0.58f, 0.53f, 0.98f },
-		{ 0.64f, 0.72f, 1.00f },
-		{ 0.44f, 0.59f, 0.98f },
-		{ 0.83f, 0.88f, 1.00f },
+		{ 0.96f, 0.97f, 1.00f },
+		{ 0.79f, 0.82f, 1.00f },
+		{ 0.63f, 0.61f, 1.00f },
+		{ 0.49f, 0.44f, 0.96f },
+		{ 0.78f, 0.74f, 1.00f },
+		{ 0.52f, 0.62f, 0.98f },
+		{ 0.68f, 0.57f, 0.99f },
+		{ 0.90f, 0.88f, 1.00f },
 	};
 	const float* tint = film_tints[(variation >> 24) & 7u];
 	const float wide_streak_dimming = 1.0f - 0.17f * fmaxf(0.0f, (width_jitter - 0.62f) / 0.38f);
-	const float intensity = (0.59f + 0.24f * brightness_jitter) * wide_streak_dimming;
+	const float intensity = (0.59f + 0.24f * brightness_jitter) * wide_streak_dimming *
+							exposure_brightness;
 	const float corners[4][3] = {
-		{ half, 0.0f, 0.0f },
-		{ half, extent, 0.0f },
-		{ -half, extent, 0.0f },
-		{ -half, 0.0f, 0.0f },
+		{ half, exposure_start, 0.0f },
+		{ half, exposure_end, 0.0f },
+		{ -half, exposure_end, 0.0f },
+		{ -half, exposure_start, 0.0f },
 	};
 	static const float shape_coords[4][2] = {
 		{ 1.0f, 0.0f }, { 1.0f, 1.0f },
@@ -673,12 +703,12 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 		const float x_scale = target_aspect > 4.0f / 3.0f ? target_aspect / (4.0f / 3.0f) : 1.0f;
 		for (uint32_t i = 0; i < count; i++) {
 			hyper_emit_streak(&verts[i * 6u], &snap->hyperspace_streaks[i], extent, transition_y, camera_rows,
-							  x_scale);
+							  x_scale, 0);
 		}
 		for (uint32_t i = 0; i < inner_count; i++) {
 			XwaHyperspaceStreak inner;
 			hyper_derive_inner_streak(&snap->hyperspace_streaks[i * 2u], &inner);
-			hyper_emit_streak(&verts[(count + i) * 6u], &inner, extent, transition_y, camera_rows, x_scale);
+			hyper_emit_streak(&verts[(count + i) * 6u], &inner, extent, transition_y, camera_rows, x_scale, 1);
 		}
 		if (!Aeron_UploadBufferDataCmd(cmd, h->streak_vb, 0, verts, bytes)) {
 			free(verts);
