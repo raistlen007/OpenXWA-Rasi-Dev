@@ -6,22 +6,14 @@
 
 #define XWA_ORIENTATION_PI 3.14159265358979323846f
 #define XWA_ORIENTATION_HALF_PI (XWA_ORIENTATION_PI * 0.5f)
-#define XWA_ORIENTATION_BAM_TO_RAD (XWA_ORIENTATION_PI / 32767.0f)
-#define XWA_ORIENTATION_RAD_TO_BAM (32767.0f / XWA_ORIENTATION_PI)
+#define XWA_ORIENTATION_BAM_TO_RAD (XWA_ORIENTATION_PI / 32768.0f)
+#define XWA_ORIENTATION_RAD_TO_BAM (32768.0f / XWA_ORIENTATION_PI)
 #define XWA_ORIENTATION_GIMBAL_EPSILON 1.0e-5f
 
 static float XwaOrientation_ClampRadians(float angle) { return atan2f(sinf(angle), cosf(angle)); }
 
-static int16_t XwaOrientation_RoundAngle(float angle) {
-	int value = (int)roundf(angle);
-
-	if (value > 32767) {
-		value = 32767;
-	} else if (value < -32767) {
-		value = -32767;
-	}
-
-	return (int16_t)value;
+static int XwaOrientation_RoundAngle(float angle) {
+	return (int)roundf(angle);
 }
 
 static void XwaOrientation_ToRadians(XwaOrientationAngles angles, float* pitch, float* yaw, float* roll) {
@@ -33,9 +25,9 @@ static void XwaOrientation_ToRadians(XwaOrientationAngles angles, float* pitch, 
 
 static XwaOrientationAngles XwaOrientation_FromRadians(float pitch, float yaw, float roll) {
 	XwaOrientationAngles result;
-	int16_t headingXY;
-	int16_t headingZ;
-	int16_t headingRoll;
+	int headingXY;
+	int headingZ;
+	int headingRoll;
 
 	headingXY = XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-yaw) * XWA_ORIENTATION_RAD_TO_BAM);
 	headingZ = XwaOrientation_RoundAngle(XwaOrientation_ClampRadians(-XWA_ORIENTATION_HALF_PI - pitch) *
@@ -45,7 +37,7 @@ static XwaOrientationAngles XwaOrientation_FromRadians(float pitch, float yaw, f
 	/* The hook selects the equivalent XWA Euler representation offset by
 	 * half a turn in yaw and roll. */
 	result.yaw = (Q16Angle)((uint16_t)headingXY + 0x8000u);
-	result.pitch = (Q16Angle)(uint16_t)(int16_t)-headingZ;
+	result.pitch = (Q16Angle)(uint16_t)(-headingZ);
 	result.roll = (Q16Angle)((uint16_t)headingRoll + 0x8000u);
 	return result;
 }
