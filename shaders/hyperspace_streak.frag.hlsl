@@ -17,11 +17,10 @@ float4 main(PSIn input) : SV_Target0
         max(-1.0f, across - 0.5f * footprint));
     float coverage = saturate(visible / footprint);
 
-    // Gentle end falloff, confined to the existing quad rather than an
-    // additional bloom layer. Leave the central length crisp.
+    // Sharper optical dash endpoints, retaining subpixel antialiasing.
     float along = saturate(input.shape_uv.y);
-    float ends = smoothstep(0.0f, 0.055f, along) *
-                 smoothstep(0.0f, 0.055f, 1.0f - along);
+    float ends = smoothstep(0.0f, 0.018f, along) *
+                 smoothstep(0.0f, 0.018f, 1.0f - along);
     float opacity = coverage * ends;
     return float4(input.color.rgb * opacity, input.color.a * opacity);
 }

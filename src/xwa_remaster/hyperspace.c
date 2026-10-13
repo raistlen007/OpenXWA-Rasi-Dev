@@ -16,7 +16,7 @@ typedef struct HyperStreakVertex {
 	float position[3];
 	float color[4];
 	float center_position[3];
-	float shape_uv[2];
+	float shape_uv[3];
 } HyperStreakVertex;
 
 /* A viewport-aware projection allows thin quads to cover the AA fringe. */
@@ -168,7 +168,7 @@ static int hyper_ensure_pipelines(XwaRemasterHyperspace* h, AeronSampleCount sam
 		  .offset = (uint32_t)offsetof(HyperStreakVertex, center_position) },
 		{ .location = 3,
 		  .buffer_slot = 0,
-		  .format = AERON_VERTEX_FORMAT_FLOAT2,
+		  .format = AERON_VERTEX_FORMAT_FLOAT3,
 		  .offset = (uint32_t)offsetof(HyperStreakVertex, shape_uv) },
 	};
 	if (h->pipeline_samples == sample_count && h->streak_pipeline && h->tunnel_pipeline) {
@@ -340,8 +340,9 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	const uint32_t variation = hyper_streak_visual_seed(streak);
 	const float width_jitter = (float)(variation & 255u) / 255.0f;
 	const float brightness_jitter = (float)((variation >> 16) & 255u) / 255.0f;
-	const float width_scale = 0.26f + 0.17f * width_jitter;
-	const float half = (float)streak->half_width * model_units_to_meters * width_scale;
+	/* Shader normalizes the apparent width after projection. */
+	const float half = (float)streak->half_width * model_units_to_meters;
+	const float film_half_width_px = 0.66f + 0.52f * width_jitter;
 
 	/* Treat each existing radial streak as a bounded part of a zoom exposure.
 	 * Its perspective projection already makes trails farther from the axis
@@ -361,10 +362,11 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	const float offset_z = (float)streak->offset[2];
 	const float radius = sqrtf(offset_x * offset_x + offset_z * offset_z);
 	const float radial_weight = radius / (radius + 4096.0f);
-	const float shutter_start = (supplemental ? 0.02f : 0.07f) +
-								(supplemental ? 0.38f : 0.53f) * start_jitter;
-	const float shutter_duration = (0.24f + 0.40f * duration_jitter) *
-									(0.68f + 0.47f * radial_weight);
+	/* Film exposure marks: shorter near the convergence, longer outward. */
+	const float shutter_start = (supplemental ? 0.025f : 0.055f) +
+								(supplemental ? 0.41f : 0.55f) * start_jitter;
+	const float shutter_duration = (0.17f + 0.34f * duration_jitter) *
+									(0.54f + 0.88f * radial_weight);
 	const float shutter_end = fminf(0.97f, shutter_start + shutter_duration);
 	const float visible_span = shutter_end - shutter_start;
 	const float exposure_start = extent * model_units_to_meters * shutter_start;
@@ -373,21 +375,16 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	/* A long optical smear spreads a star's energy over more pixels. */
 	const float exposure_brightness =
 		fminf(1.12f, fmaxf(0.72f, sqrtf(0.38f / fmaxf(visible_span, 0.12f))));
-	/* The original optical look leans lavender-white rather than icy blue. */
+	/* ROTJ-inspired blue-white, with a few lavender and brilliant highlights.
+	 * Lower additive intensity compensates for the increased line population. */
 	static const float film_tints[8][3] = {
-		{ 0.96f, 0.97f, 1.00f },
-		{ 0.79f, 0.82f, 1.00f },
-		{ 0.63f, 0.61f, 1.00f },
-		{ 0.49f, 0.44f, 0.96f },
-		{ 0.78f, 0.74f, 1.00f },
-		{ 0.52f, 0.62f, 0.98f },
-		{ 0.68f, 0.57f, 0.99f },
-		{ 0.90f, 0.88f, 1.00f },
+		{ 0.95f, 0.97f, 1.00f }, { 0.75f, 0.87f, 1.00f },
+		{ 0.52f, 0.75f, 1.00f }, { 0.42f, 0.62f, 0.99f },
+		{ 0.85f, 0.92f, 1.00f }, { 0.66f, 0.73f, 0.99f },
+		{ 0.91f, 0.95f, 1.00f }, { 0.59f, 0.81f, 1.00f },
 	};
 	const float* tint = film_tints[(variation >> 24) & 7u];
-	const float wide_streak_dimming = 1.0f - 0.17f * fmaxf(0.0f, (width_jitter - 0.62f) / 0.38f);
-	const float intensity = (0.59f + 0.24f * brightness_jitter) * wide_streak_dimming *
-							exposure_brightness;
+	const float intensity = (0.48f + 0.22f * brightness_jitter) * exposure_brightness;
 	const float corners[4][3] = {
 		{ half, exposure_start, 0.0f },
 		{ half, exposure_end, 0.0f },
@@ -418,7 +415,9 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 		hyper_widescreen_remap(center, camera_rows, x_scale);
 		memcpy(out[v].position, p, sizeof p);
 		memcpy(out[v].center_position, center, sizeof center);
-		memcpy(out[v].shape_uv, shape_coords[corner], sizeof out[v].shape_uv);
+		out[v].shape_uv[0] = shape_coords[corner][0];
+		out[v].shape_uv[1] = shape_coords[corner][1];
+		out[v].shape_uv[2] = film_half_width_px;
 		out[v].color[0] = tint[0] * intensity;
 		out[v].color[1] = tint[1] * intensity;
 		out[v].color[2] = tint[2] * intensity;
@@ -426,27 +425,28 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	}
 }
 
-/* Add more quads to the existing streak draw, rather than generating additional
- * game-side particles. The stable source positions preserve simulation RNG,
- * while the smaller, slightly rotated radial offsets fill the empty center. */
-static void hyper_derive_inner_streak(const XwaHyperspaceStreak* source,
-									 XwaHyperspaceStreak* inner) {
-	*inner = *source;
-	const uint32_t variation = hyper_streak_visual_seed(source);
-	const float radial_jitter = (float)((variation >> 8) & 255u) / 255.0f;
-	const float angle_jitter = (float)((variation >> 16) & 255u) / 255.0f;
-	const float radius_scale = 0.23f + 0.31f * radial_jitter;
-	const float angle = (angle_jitter - 0.5f) * 0.30f;
-	const float cosine = cosf(angle);
-	const float sine = sinf(angle);
-	const float x = (float)source->offset[0] * radius_scale;
-	const float z = (float)source->offset[2] * radius_scale;
-	inner->offset[0] = (int32_t)(x * cosine - z * sine);
-	inner->offset[2] = (int32_t)(x * sine + z * cosine);
-	inner->half_width = (int32_t)fmaxf(1.0f, (float)source->half_width * radius_scale);
-	/* Rotate the quad along with the radial offset so it still points away
-	 * from the same vanishing point. Q16 roll has 65536 units per turn. */
-	inner->roll = (uint16_t)(source->roll + (int32_t)(angle * (65536.0f / 6.28318530718f)));
+/* Renderer-only companion exposure marks. Preserve game RNG, star population,
+ * 3D depth movement and the distinct outbound/inbound timings. */
+static void hyper_derive_film_streak(const XwaHyperspaceStreak* source,
+								 XwaHyperspaceStreak* derived, uint32_t variant) {
+	*derived = *source;
+	uint32_t hash = hyper_streak_visual_seed(source) ^ (0x9e3779b9u * (variant + 1u));
+	hash ^= hash >> 16;
+	hash *= 0x7feb352du;
+	hash ^= hash >> 15;
+	hash *= 0x846ca68bu;
+	hash ^= hash >> 16;
+	const float r = (float)(hash & 65535u) / 65535.0f;
+	const float a = (float)(hash >> 16) / 65535.0f;
+	const float radial_scale = variant == 0u ? 0.18f + 0.34f * r : 0.56f + 0.41f * r;
+	const float angle = (a - 0.5f) * (variant == 0u ? 0.36f : 0.27f);
+	const float sine = sinf(angle), cosine = cosf(angle);
+	const float x = (float)source->offset[0] * radial_scale;
+	const float z = (float)source->offset[2] * radial_scale;
+	derived->offset[0] = (int32_t)(x * cosine - z * sine);
+	derived->offset[2] = (int32_t)(x * sine + z * cosine);
+	derived->half_width = (int32_t)fmaxf(1.0f, (float)source->half_width * radial_scale);
+	derived->roll = (uint16_t)(source->roll + (int32_t)(angle * (65536.0f / 6.28318530718f)));
 }
 
 static float hyper_transition_center_y(const XwaFlightCamera* camera) {
@@ -686,10 +686,8 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 	uint32_t count = snap->hyperspace_streak_count;
 	if (count > XWA_SNAP_MAX_HYPERSPACE_STREAKS)
 		count = XWA_SNAP_MAX_HYPERSPACE_STREAKS;
-	/* A capped 1024 source streaks now produce up to 1536 visible streaks.
-	 * Supplemental streaks share the original vertex buffer and draw call. */
-	const uint32_t inner_count = count / 2u;
-	const uint32_t vertex_count = (count + inner_count) * 6u;
+	/* Up to 3072 exposure marks from 1024 original game seeds, one draw call. */
+	const uint32_t vertex_count = count * 3u * 6u;
 	const uint32_t bytes = vertex_count * (uint32_t)sizeof(HyperStreakVertex);
 	if (vertex_count) {
 		if (!hyper_ensure_streak_buffer(h, bytes)) {
@@ -705,10 +703,13 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 			hyper_emit_streak(&verts[i * 6u], &snap->hyperspace_streaks[i], extent, transition_y, camera_rows,
 							  x_scale, 0);
 		}
-		for (uint32_t i = 0; i < inner_count; i++) {
-			XwaHyperspaceStreak inner;
-			hyper_derive_inner_streak(&snap->hyperspace_streaks[i * 2u], &inner);
-			hyper_emit_streak(&verts[(count + i) * 6u], &inner, extent, transition_y, camera_rows, x_scale, 1);
+		for (uint32_t variant = 0; variant < 2u; variant++) {
+			for (uint32_t i = 0; i < count; i++) {
+				XwaHyperspaceStreak derived;
+				hyper_derive_film_streak(&snap->hyperspace_streaks[i], &derived, variant);
+				hyper_emit_streak(&verts[(count * (variant + 1u) + i) * 6u],
+									  &derived, extent, transition_y, camera_rows, x_scale, 1);
+			}
 		}
 		if (!Aeron_UploadBufferDataCmd(cmd, h->streak_vb, 0, verts, bytes)) {
 			free(verts);

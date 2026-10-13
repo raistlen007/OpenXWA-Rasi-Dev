@@ -9,7 +9,7 @@ struct VSIn
     float3 position : POSITION;
     float4 color : COLOR0;
     float3 center_position : POSITION1;
-    float2 shape_uv : TEXCOORD0;
+    float3 shape_uv : TEXCOORD0;
 };
 
 struct VSOut
@@ -25,16 +25,20 @@ VSOut main(VSIn input)
     float4 edge = mul(view_proj, float4(input.position, 1.0f));
     float4 center = mul(view_proj, float4(input.center_position, 1.0f));
 
-    // A pixel-wide guard band lets fragment AA represent subpixel-thin
-    // streaks instead of dropping them when the rasterizer misses the quad.
+    // Film-style widths in projected screen pixels: consistent across the
+    // view, preserving the original 3D centerline and the flypast animation.
     float2 size = max(viewport.xy, float2(1.0f, 1.0f));
-    float edge_w = abs(edge.w) > 1.0e-4f ? edge.w : 1.0e-4f;
-    float center_w = abs(center.w) > 1.0e-4f ? center.w : 1.0e-4f;
-    float2 radial_px = (edge.xy / edge_w - center.xy / center_w) * (0.5f * size);
-    float half_width_px = length(radial_px);
-    float2 outward = half_width_px > 1.0e-5f ? radial_px / half_width_px : float2(1.0f, 0.0f);
+    float edge_w = abs(edge.w) > 1.0e-4f ? edge.w : (edge.w < 0.0f ? -1.0e-4f : 1.0e-4f);
+    float center_w = abs(center.w) > 1.0e-4f ? center.w : (center.w < 0.0f ? -1.0e-4f : 1.0e-4f);
+    float2 center_ndc = center.xy / center_w;
+    float2 radial_px = (edge.xy / edge_w - center_ndc) * (0.5f * size);
+    float radial_len = length(radial_px);
+    float2 outward = radial_len > 1.0e-5f
+        ? radial_px / radial_len : float2(input.shape_uv.x, 0.0f);
+    float pixel_scale = max(0.70f, size.y / 1080.0f);
+    float half_width_px = input.shape_uv.z * pixel_scale;
     const float fringe_px = 1.0f;
-    edge.xy += outward * (2.0f * fringe_px / size) * edge.w;
+    edge.xy = (center_ndc + outward * (2.0f * (half_width_px + fringe_px) / size)) * edge.w;
 
     output.position = edge;
     output.color = input.color;
