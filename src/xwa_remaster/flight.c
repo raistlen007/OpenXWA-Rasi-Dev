@@ -3282,7 +3282,7 @@ static void fl_draw_present(AeronCommandBuffer* cmd, AeronRenderPass* pass, Aero
 	Aeron_SetScissor(pass, &full_target);
 	static const float present_tint[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 	AeronScenePresentChain_Draw(chain, pass, s.present_scene_tex, s.present_sampler, s.present_bloom_tex,
-								s.map_present ? 0.0f : AeronSceneBloom_Intensity(), s.rt_w, s.rt_h,
+								s.map_present || !s.present_bloom_tex ? 0.0f : AeronSceneBloom_Intensity(), s.rt_w, s.rt_h,
 								/*bar_y_uv=*/1.0f, present_tint, /*src_coverage=*/0);
 	if (s.suppress_hud) {
 		return;
@@ -3375,14 +3375,14 @@ void XwaRemasterFlight_InvalidateHistory(void) {
 /* Both ordinary flight and the dedicated hyperspace scene arrive here with
  * AeronScene_Render complete. Bloom remains in the scene command buffer; the
  * final draws are either deferred to Aeron_Present or recorded into present_rt. */
-static AeronTexture* fl_present(AeronCommandBuffer* cmd, int direct_present) {
+static AeronTexture* fl_present(AeronCommandBuffer* cmd, int direct_present, int allow_bloom) {
 	s.present_scene_tex = Aeron_RenderTargetGetTexture(AeronScene_SceneRt(s.scene));
 	s.present_bloom_tex = NULL;
 	if (!s.present_scene_tex) {
 		s.direct_ready = 0;
 		return NULL;
 	}
-	if (!s.map_present && s.bloom && AeronSceneBloom_Intensity() > 0.0f) {
+	if (allow_bloom && !s.map_present && s.bloom && AeronSceneBloom_Intensity() > 0.0f) {
 		if (!AeronSceneBloom_Apply(s.bloom, cmd, s.present_scene_tex, s.rt_w, s.rt_h, s.rt_h)) {
 			Aeron_CommandBufferSetFailure(cmd, "Flight bloom recording failed");
 			return NULL;
@@ -3548,7 +3548,9 @@ static AeronTexture* fl_render_hyperspace(AeronCommandBuffer* cmd, const XwaSnap
 	AeronScene_SetPassHook(s.scene, AERON_SCENE_HOOK_BEFORE_OPAQUE, NULL, NULL);
 	s.before_opaque_mode = FL_BEFORE_OPAQUE_NONE;
 	s.snap = NULL;
-	return fl_present(cmd, direct_present);
+	/* Only outbound streaks bypass bloom. Keep tunnel, inbound and
+	 * regular flight on their existing presentation pipeline. */
+	return fl_present(cmd, direct_present, phase != XWA_HYPERSPACE_OUTBOUND);
 }
 
 typedef struct FlSceneLighting {
@@ -3706,7 +3708,7 @@ static AeronTexture* fl_render_map(AeronCommandBuffer* cmd, const XwaSnapshot* s
 		return NULL;
 	}
 	s.snap = NULL;
-	return fl_present(cmd, direct_present);
+	return fl_present(cmd, direct_present, 1);
 }
 
 AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapshot* snap,
@@ -4343,7 +4345,7 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 	AeronScene_SetPassHook(s.scene, AERON_SCENE_HOOK_BEFORE_OPAQUE, NULL, NULL);
 	s.before_opaque_mode = FL_BEFORE_OPAQUE_NONE;
 	s.snap = NULL; /* hooks must not outlive the snapshot */
-	return fl_present(cmd, direct_present);
+	return fl_present(cmd, direct_present, 1);
 }
 
 void XwaRemasterFlight_Shutdown(void) {
