@@ -358,9 +358,10 @@ static void hyper_choose_entry_style(XwaRemasterHyperspace* h) {
 		(++h->entry_sequence * 0x9e3779b9u));
 	/* Choose a mostly white/blue-white look with 20-30% cobalt streaks.
 	 * Parameters vary between jumps, without separate film-style presets. */
-	h->entry_style.blue_strength = 0.92f + 0.08f * hyper_style_unit(seed ^ 0x62a9d9edu);
+	h->entry_style.blue_strength = 0.94f + 0.06f * hyper_style_unit(seed ^ 0x62a9d9edu);
 	h->entry_style.cyan_bias = hyper_style_unit(seed ^ 0xa58f3421u);
-	h->entry_style.white_share = 0.70f + 0.10f * hyper_style_unit(seed ^ 0x147c861bu);
+	/* Compensate for white overexposure and overlap in the final image. */
+	h->entry_style.white_share = 0.55f + 0.08f * hyper_style_unit(seed ^ 0x147c861bu);
 	h->entry_style.width_scale = 0.91f + 0.18f * hyper_style_unit(seed ^ 0x3c4fa278u);
 	h->entry_style.intensity_scale = 0.94f + 0.14f * hyper_style_unit(seed ^ 0xef042d6bu);
 	h->entry_style_valid = 1;
@@ -445,33 +446,38 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	float intensity = (0.48f + 0.22f * brightness_jitter) * exposure_brightness;
 	float entry_tint[3];
 	if (entry_style) {
-		/* Most marks are brilliant blue-white. A 20-30% minority has
-		 * distinct cobalt-blue coloring; both still use additive blending. */
+		/* Target a visibly blue minority AFTER additive scene blending.
+		 * Whites dominate overlap in the bright center; the more separated
+		 * outer marks retain their cobalt color. */
 		const float color_jitter = (float)((variation >> 8) & 255u) / 255.0f;
 		const float hue_jitter = (float)((variation >> 24) & 255u) / 255.0f;
-		if (color_jitter < entry_style->white_share) {
+		const float white_cutoff = entry_style->white_share - 0.14f * radial_weight;
+		if (color_jitter < white_cutoff) {
 			/* Hot white with a very slight cool tint. */
 			const float cool = 0.018f + 0.024f * hue_jitter;
 			entry_tint[0] = 1.0f - cool * 1.3f;
 			entry_tint[1] = 1.0f - cool * 0.8f;
 			entry_tint[2] = 1.0f;
-			intensity = 1.70f + 0.65f * brightness_jitter;
+			/* Preserve brilliant white highlights without making every
+			 * white mark overpower the colored ones. */
+			const float white_jitter = color_jitter / fmaxf(white_cutoff, 0.001f);
+			intensity = white_jitter < 0.25f
+				? 1.70f + 0.65f * brightness_jitter
+				: 1.05f + 0.55f * brightness_jitter;
 		} else {
-			/* Strong blue accents without the previous cyan/violet extremes. */
-			const float blue_jitter = (color_jitter - entry_style->white_share) /
-				(1.0f - entry_style->white_share);
-			const float chroma = fminf(1.0f, (0.82f + 0.16f * blue_jitter) *
+			/* Rich cobalt-blue without cyan or violet dominance. */
+			const float blue_jitter = (color_jitter - white_cutoff) /
+				fmaxf(1.0f - white_cutoff, 0.001f);
+			const float chroma = fminf(1.0f, (0.87f + 0.11f * blue_jitter) *
 				entry_style->blue_strength);
-			const float hue = 2.0f * hue_jitter - 1.0f;
-			entry_tint[0] = 1.0f - chroma * (0.62f + 0.025f * hue);
-			entry_tint[1] = 1.0f - chroma * (0.60f - 0.025f * hue);
+			const float hue = (hue_jitter - 0.5f) * 0.06f +
+				(entry_style->cyan_bias - 0.5f) * 0.035f;
+			entry_tint[0] = 1.0f - chroma * (0.87f + hue);
+			entry_tint[1] = 1.0f - chroma * (0.91f - hue);
 			entry_tint[2] = 1.0f;
-			/* White/blue overlaps brighten under additive blending. Gently
-			 * whiten isolated blue lines near the more crowded visual center. */
-			const float center_whiten = 0.40f * (1.0f - radial_weight);
-			entry_tint[0] += (1.0f - entry_tint[0]) * center_whiten;
-			entry_tint[1] += (1.0f - entry_tint[1]) * center_whiten;
-			intensity = 1.17f + 0.42f * brightness_jitter;
+			/* Let additive blue/white overlaps wash toward white; do not
+			 * preemptively desaturate blue marks near the center. */
+			intensity = 1.23f + 0.42f * brightness_jitter;
 		}
 		tint = entry_tint;
 		intensity *= exposure_brightness * entry_style->intensity_scale;
