@@ -693,8 +693,21 @@ static void xwa_tool_hyperspace_streaks(int* open, void* user) {
 	ImGui::Separator();
 	ImGui::TextUnformatted("White and cobalt-blue (linear RGB)");
 	float percent = 100.0f * p.white_share;
-	if (ImGui::SliderFloat("White share", &percent, 0.0f, 100.0f, "%.1f%%")) {
+	if (ImGui::SliderFloat("Preview white share", &percent, 0.0f, 100.0f, "%.1f%%")) {
 		p.white_share = percent / 100.0f;
+		changed = true;
+	}
+	ImGui::TextDisabled("Real jumps choose one white share per entry:");
+	float random_min_percent = 100.0f * p.white_share_min;
+	float random_max_percent = 100.0f * p.white_share_max;
+	if (ImGui::SliderFloat("Random white min", &random_min_percent,
+								0.0f, random_max_percent, "%.1f%%")) {
+		p.white_share_min = random_min_percent / 100.0f;
+		changed = true;
+	}
+	if (ImGui::SliderFloat("Random white max", &random_max_percent,
+								random_min_percent, 100.0f, "%.1f%%")) {
+		p.white_share_max = random_max_percent / 100.0f;
 		changed = true;
 	}
 	changed |= ImGui::SliderFloat("White brightness", &p.white_brightness, 0.0f, 4.0f, "%.2fx");
@@ -715,8 +728,8 @@ static void xwa_tool_hyperspace_streaks(int* open, void* user) {
 		p.bloom_enabled = bloom ? 1 : 0;
 		changed = true;
 	}
-	ImGui::TextDisabled("Sliders also affect the next real outbound jump.\n"
-		"The inbound/exit sequence is unchanged.");
+	ImGui::TextDisabled("White preview share is manual; real entry share is randomized.\n"
+		"Other sliders affect real outbound jumps. Inbound/exit is unchanged.");
 
 	ImGui::Separator();
 	if (ImGui::Button("Reset starting values")) {
@@ -729,6 +742,8 @@ static void xwa_tool_hyperspace_streaks(int* open, void* user) {
 		std::snprintf(data, sizeof data,
 			"hyperspace_streaks:\n"
 			"  white_share: %.4f\n"
+			"  white_share_min: %.4f\n"
+			"  white_share_max: %.4f\n"
 			"  white_brightness: %.4f\n"
 			"  blue_brightness: %.4f\n"
 			"  blue_red: %.4f\n"
@@ -739,7 +754,8 @@ static void xwa_tool_hyperspace_streaks(int* open, void* user) {
 			"  bloom_enabled: %s\n"
 			"  preview_seed: %u\n"
 			"  preview_ticks: %d\n",
-			(double)p.white_share, (double)p.white_brightness,
+			(double)p.white_share, (double)p.white_share_min, (double)p.white_share_max,
+			(double)p.white_brightness,
 			(double)p.blue_brightness, (double)p.blue_red, (double)p.blue_green,
 			(double)p.density_scale, (double)p.width_scale, (double)p.length_scale,
 			p.bloom_enabled ? "true" : "false", (unsigned)p.preview_seed, p.preview_ticks);

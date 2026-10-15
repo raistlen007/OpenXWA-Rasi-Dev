@@ -160,7 +160,9 @@ int XwaRemasterFlight_HyperspaceTunnelPreviewEnabled(void);
 /* Session-only outbound streak tuning; render-only preview cannot advance
  * the simulation or consume game RNG. */
 typedef struct XwaFlightHyperspaceStreakParams {
-	float white_share;
+	float white_share;        /* manually controlled preview share */
+	float white_share_min;    /* random actual-entry lower bound */
+	float white_share_max;    /* random actual-entry upper bound */
 	float white_brightness;
 	float blue_brightness;
 	float blue_red;

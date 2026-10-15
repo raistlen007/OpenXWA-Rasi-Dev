@@ -607,16 +607,18 @@ static int fl_pbr_config_valid(const XwaShipPbrTuning* p) {
 /* Debug-tuner starting values; not a film-accuracy preset. */
 static XwaFlightHyperspaceStreakParams fl_streak_defaults(void) {
 	return (XwaFlightHyperspaceStreakParams) {
-		.white_share = 0.75f,
-		.white_brightness = 1.0f,
-		.blue_brightness = 1.0f,
-		.blue_red = 0.28f,
-		.blue_green = 0.40f,
-		.density_scale = 1.0f,
-		.width_scale = 1.0f,
-		.length_scale = 1.0f,
-		.preview_seed = 1u,
-		.preview_ticks = 390,
+		.white_share = 0.6540f,
+		.white_share_min = 0.42f,
+		.white_share_max = 0.88f,
+		.white_brightness = 2.4400f,
+		.blue_brightness = 2.5900f,
+		.blue_red = 0.3620f,
+		.blue_green = 0.4920f,
+		.density_scale = 2.1800f,
+		.width_scale = 0.9500f,
+		.length_scale = 1.7700f,
+		.preview_seed = 3041712727u,
+		.preview_ticks = 462,
 		.bloom_enabled = 0,
 	};
 }
@@ -1309,6 +1311,8 @@ void XwaRemasterFlight_SetHyperspaceStreaks(const XwaFlightHyperspaceStreakParam
 	XwaFlightHyperspaceStreakParams p = *in;
 	const XwaFlightHyperspaceStreakParams def = fl_streak_defaults();
 	if (!isfinite(p.white_share)) p.white_share = def.white_share;
+	if (!isfinite(p.white_share_min)) p.white_share_min = def.white_share_min;
+	if (!isfinite(p.white_share_max)) p.white_share_max = def.white_share_max;
 	if (!isfinite(p.white_brightness)) p.white_brightness = def.white_brightness;
 	if (!isfinite(p.blue_brightness)) p.blue_brightness = def.blue_brightness;
 	if (!isfinite(p.blue_red)) p.blue_red = def.blue_red;
@@ -1317,6 +1321,8 @@ void XwaRemasterFlight_SetHyperspaceStreaks(const XwaFlightHyperspaceStreakParam
 	if (!isfinite(p.width_scale)) p.width_scale = def.width_scale;
 	if (!isfinite(p.length_scale)) p.length_scale = def.length_scale;
 	p.white_share = fminf(fmaxf(p.white_share, 0.0f), 1.0f);
+	p.white_share_min = fminf(fmaxf(p.white_share_min, 0.0f), 1.0f);
+	p.white_share_max = fminf(fmaxf(p.white_share_max, p.white_share_min), 1.0f);
 	p.white_brightness = fminf(fmaxf(p.white_brightness, 0.0f), 4.0f);
 	p.blue_brightness = fminf(fmaxf(p.blue_brightness, 0.0f), 4.0f);
 	p.blue_red = fminf(fmaxf(p.blue_red, 0.0f), 1.0f);

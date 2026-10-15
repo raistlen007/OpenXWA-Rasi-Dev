@@ -4,6 +4,7 @@
 
 #include "aeron/aeron.h"
 #include "aeron/asset/opt_model.h"
+#include "xwa_runtime/timing/host_clock.h"
 #include "xwa_remaster/color.h"
 #include "xwa_remaster/flight.h"
 
@@ -72,6 +73,13 @@ struct XwaRemasterHyperspace {
 	XwaFlightHyperspaceTunnelParams params;
 	XwaFlightHyperspaceStreakParams streak_tuning;
 	int streak_preview;
+	/* Keep one white share for the entire real outbound hyperspace entry. */
+	float entry_white_share;
+	uint32_t entry_sequence;
+	uint32_t last_phase_ticks;
+	uint8_t last_phase;
+	int last_was_streak_preview;
+	int entry_white_share_valid;
 	HyperTunnelUniform tunnel_uniform;
 	XwaRemasterHyperspaceLighting lighting;
 };
@@ -244,16 +252,18 @@ XwaRemasterHyperspace* XwaRemasterHyperspace_Create(const XwaFlightHyperspaceTun
 		return NULL;
 	}
 	h->params = *params;
-	h->streak_tuning.white_share = 0.75f;
-	h->streak_tuning.white_brightness = 1.0f;
-	h->streak_tuning.blue_brightness = 1.0f;
-	h->streak_tuning.blue_red = 0.28f;
-	h->streak_tuning.blue_green = 0.40f;
-	h->streak_tuning.density_scale = 1.0f;
-	h->streak_tuning.width_scale = 1.0f;
-	h->streak_tuning.length_scale = 1.0f;
-	h->streak_tuning.preview_seed = 1u;
-	h->streak_tuning.preview_ticks = 390;
+	h->streak_tuning.white_share = 0.6540f;
+	h->streak_tuning.white_share_min = 0.42f;
+	h->streak_tuning.white_share_max = 0.88f;
+	h->streak_tuning.white_brightness = 2.4400f;
+	h->streak_tuning.blue_brightness = 2.5900f;
+	h->streak_tuning.blue_red = 0.3620f;
+	h->streak_tuning.blue_green = 0.4920f;
+	h->streak_tuning.density_scale = 2.1800f;
+	h->streak_tuning.width_scale = 0.9500f;
+	h->streak_tuning.length_scale = 1.7700f;
+	h->streak_tuning.preview_seed = 3041712727u;
+	h->streak_tuning.preview_ticks = 462;
 	return h;
 }
 
@@ -654,6 +664,30 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 		(streak_preview ? XWA_HYPERSPACE_OUTBOUND : snap->hyperspace.phase);
 	const uint32_t ticks = force_tunnel ? 0u :
 		(streak_preview ? (uint32_t)h->streak_tuning.preview_ticks : snap->hyperspace.phase_elapsed_ticks);
+	/* Each actual outbound entry gets a fresh, uniformly sampled white
+	 * fraction. It stays fixed through every frame of the same entry.
+	 * The frozen inspector preview keeps its exact manual white share.
+	 * Only host clock and renderer-local sequence state are consumed. */
+	if (phase == XWA_HYPERSPACE_OUTBOUND && !streak_preview &&
+		(!h->entry_white_share_valid ||
+		 h->last_phase != XWA_HYPERSPACE_OUTBOUND || h->last_was_streak_preview ||
+		 ticks < h->last_phase_ticks)) {
+		const uint64_t host_us = XwaTime_GetElapsedUs();
+		uint32_t hash = (uint32_t)host_us ^ (uint32_t)(host_us >> 32) ^
+			(++h->entry_sequence * 0x9e3779b9u);
+		hash ^= hash >> 16;
+		hash *= 0x7feb352du;
+		hash ^= hash >> 15;
+		hash *= 0x846ca68bu;
+		hash ^= hash >> 16;
+		const float unit = (float)(hash >> 8) / 16777215.0f;
+		h->entry_white_share = h->streak_tuning.white_share_min +
+			(h->streak_tuning.white_share_max - h->streak_tuning.white_share_min) * unit;
+		h->entry_white_share_valid = 1;
+	}
+	h->last_phase = phase;
+	h->last_phase_ticks = ticks;
+	h->last_was_streak_preview = streak_preview;
 	if (phase == XWA_HYPERSPACE_TUNNEL) {
 		if (tunnel_view) {
 			h->tunnel_uniform.projection[0] = tunnel_view->tan_half_fov_x;
@@ -755,8 +789,12 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 		count = XWA_SNAP_MAX_HYPERSPACE_STREAKS;
 	/* Smooth density adjustment with stable partial companion populations.
 	 * Three complete marks per seed at density 1.0 (original baseline). */
+	XwaFlightHyperspaceStreakParams entry_tuning = h->streak_tuning;
+	/* Real entry uses the fixed per-jump draw; preview stays exactly as set. */
+	if (phase == XWA_HYPERSPACE_OUTBOUND && !streak_preview)
+		entry_tuning.white_share = h->entry_white_share;
 	const XwaFlightHyperspaceStreakParams* tuning =
-		phase == XWA_HYPERSPACE_OUTBOUND ? &h->streak_tuning : NULL;
+		phase == XWA_HYPERSPACE_OUTBOUND ? &entry_tuning : NULL;
 	const float marks_per_seed = tuning ? 3.0f * tuning->density_scale : 3.0f;
 	const uint32_t full_marks = (uint32_t)floorf(marks_per_seed);
 	const uint32_t supplement_count = (uint32_t)ceilf(marks_per_seed) - 1u;
