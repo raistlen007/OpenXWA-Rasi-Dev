@@ -157,6 +157,29 @@ void XwaRemasterFlight_GetHyperspaceTunnelDefault(XwaFlightHyperspaceTunnelParam
 void XwaRemasterFlight_SetHyperspaceTunnelPreview(int enabled);
 int XwaRemasterFlight_HyperspaceTunnelPreviewEnabled(void);
 
+/* Session-only outbound streak tuning; render-only preview cannot advance
+ * the simulation or consume game RNG. */
+typedef struct XwaFlightHyperspaceStreakParams {
+	float white_share;        /* manually controlled preview share */
+	float white_share_min;    /* random actual-entry lower bound */
+	float white_share_max;    /* random actual-entry upper bound */
+	float white_brightness;
+	float blue_brightness;
+	float blue_red;
+	float blue_green;
+	float density_scale;
+	float width_scale;
+	float length_scale;
+	uint32_t preview_seed;
+	int preview_ticks;
+	int bloom_enabled;
+} XwaFlightHyperspaceStreakParams;
+void XwaRemasterFlight_GetHyperspaceStreaks(XwaFlightHyperspaceStreakParams* out);
+void XwaRemasterFlight_SetHyperspaceStreaks(const XwaFlightHyperspaceStreakParams* in);
+void XwaRemasterFlight_GetHyperspaceStreaksDefault(XwaFlightHyperspaceStreakParams* out);
+void XwaRemasterFlight_SetHyperspaceStreakPreview(int enabled);
+int XwaRemasterFlight_HyperspaceStreakPreviewEnabled(void);
+
 /* FSR controls exposed by the debug inspector. The user menu persists only
  * the mode; sharpness and debug visualization remain session-only. */
 typedef struct XwaFlightTemporalParams {
