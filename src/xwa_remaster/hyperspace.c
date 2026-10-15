@@ -452,7 +452,11 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 		 * ones; each jump drifts within a continuous range, not film presets. */
 		const float color_jitter = (float)((variation >> 8) & 255u) / 255.0f;
 		const float hue_jitter = (float)((variation >> 24) & 255u) / 255.0f;
-		const float hue = 0.42f * entry_style->cyan_bias + 0.58f * hue_jitter;
+		/* Most marks span violet-blue to cobalt, while a narrow high-end
+		 * tail (approximately four percent) remains cyan-blue. */
+		const float hue = 0.20f * entry_style->cyan_bias + 0.80f * hue_jitter;
+		const float cyan_tail = hue_jitter > 0.96f ?
+			(hue_jitter - 0.96f) / 0.04f : 0.0f;
 		float chroma;
 		if (color_jitter < entry_style->white_share) {
 			/* Retain the existing hot-white peak intensity, but give even
@@ -469,10 +473,10 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 			 * the white cores, without flattening their saturation. */
 			intensity = 1.17f + 0.42f * brightness_jitter;
 		}
-		/* Strong violet-blue through cobalt to cyan-blue: the red and
-		 * green channels stay well below blue even after tonemapping. */
-		entry_tint[0] = 1.0f - chroma * (0.67f + 0.30f * hue);
-		entry_tint[1] = 1.0f - chroma * (0.85f - 0.57f * hue);
+		/* Suppress the green-heavy cyan hue of the previous pass.
+		 * Keep clear cobalt/indigo and violet-blue, with rare cyan accents. */
+		entry_tint[0] = 1.0f - chroma * (0.68f + 0.20f * hue);
+		entry_tint[1] = 1.0f - chroma * (0.90f - 0.16f * hue - 0.45f * cyan_tail);
 		entry_tint[2] = 1.0f;
 		tint = entry_tint;
 		intensity *= exposure_brightness * entry_style->intensity_scale;
