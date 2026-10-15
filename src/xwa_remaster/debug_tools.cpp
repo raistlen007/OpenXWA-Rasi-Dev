@@ -656,6 +656,102 @@ static void xwa_tool_hyperspace_tunnel(int* open, void* user) {
 	*open = b ? 1 : 0;
 }
 
+/* ---- Hyperspace entry streaks: frozen render-only preview ---------- */
+
+static void xwa_tool_hyperspace_streaks(int* open, void* user) {
+	(void)user;
+	ImGui::SetNextWindowSize(ImVec2(475, 625), ImGuiCond_FirstUseEver);
+	bool b = *open != 0;
+	if (!ImGui::Begin("Hyperspace Streaks", &b)) {
+		ImGui::End();
+		if (!b) XwaRemasterFlight_SetHyperspaceStreakPreview(0);
+		*open = b ? 1 : 0;
+		return;
+	}
+
+	XwaFlightHyperspaceStreakParams p;
+	XwaRemasterFlight_GetHyperspaceStreaks(&p);
+	bool changed = false;
+	bool preview = XwaRemasterFlight_HyperspaceStreakPreviewEnabled() != 0;
+	if (ImGui::Checkbox("Frozen entry preview", &preview))
+		XwaRemasterFlight_SetHyperspaceStreakPreview(preview ? 1 : 0);
+	ImGui::TextDisabled("Render-only preview; normal simulation keeps running.\n"
+		"Actual hyperspace and the map take precedence.");
+	changed |= ImGui::SliderInt("Entry animation tick", &p.preview_ticks, 40, 471);
+	ImGui::TextDisabled("236 ticks per second; the selected frame stays frozen.");
+	int preview_seed = (int)p.preview_seed;
+	if (ImGui::InputInt("Preview seed", &preview_seed)) {
+		p.preview_seed = (uint32_t)preview_seed;
+		changed = true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Reroll")) {
+		p.preview_seed += 0x9e3779b9u;
+		changed = true;
+	}
+
+	ImGui::Separator();
+	ImGui::TextUnformatted("White and cobalt-blue (linear RGB)");
+	float percent = 100.0f * p.white_share;
+	if (ImGui::SliderFloat("White share", &percent, 0.0f, 100.0f, "%.1f%%")) {
+		p.white_share = percent / 100.0f;
+		changed = true;
+	}
+	changed |= ImGui::SliderFloat("White brightness", &p.white_brightness, 0.0f, 4.0f, "%.2fx");
+	changed |= ImGui::SliderFloat("Blue brightness", &p.blue_brightness, 0.0f, 4.0f, "%.2fx");
+	changed |= ImGui::SliderFloat("Blue red channel", &p.blue_red, 0.0f, 1.0f, "%.3f");
+	changed |= ImGui::SliderFloat("Blue green channel", &p.blue_green, 0.0f, 1.0f, "%.3f");
+	ImGui::TextDisabled("Blue stays at 1.0; adjust red and green independently\n"
+		"to avoid cyan and violet.");
+	ImGui::ColorButton("Blue sample", ImVec4(p.blue_red, p.blue_green, 1.0f, 1.0f));
+
+	ImGui::Separator();
+	ImGui::TextUnformatted("Exposure and geometry");
+	changed |= ImGui::SliderFloat("Density", &p.density_scale, 0.40f, 2.50f, "%.2fx");
+	changed |= ImGui::SliderFloat("Streak width", &p.width_scale, 0.25f, 3.0f, "%.2fx");
+	changed |= ImGui::SliderFloat("Streak length", &p.length_scale, 0.25f, 2.0f, "%.2fx");
+	bool bloom = p.bloom_enabled != 0;
+	if (ImGui::Checkbox("Bloom (entry only)", &bloom)) {
+		p.bloom_enabled = bloom ? 1 : 0;
+		changed = true;
+	}
+	ImGui::TextDisabled("Sliders also affect the next real outbound jump.\n"
+		"The inbound/exit sequence is unchanged.");
+
+	ImGui::Separator();
+	if (ImGui::Button("Reset starting values")) {
+		XwaRemasterFlight_GetHyperspaceStreaksDefault(&p);
+		changed = true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Copy tuning values")) {
+		char data[768];
+		std::snprintf(data, sizeof data,
+			"hyperspace_streaks:\n"
+			"  white_share: %.4f\n"
+			"  white_brightness: %.4f\n"
+			"  blue_brightness: %.4f\n"
+			"  blue_red: %.4f\n"
+			"  blue_green: %.4f\n"
+			"  density_scale: %.4f\n"
+			"  width_scale: %.4f\n"
+			"  length_scale: %.4f\n"
+			"  bloom_enabled: %s\n"
+			"  preview_seed: %u\n"
+			"  preview_ticks: %d\n",
+			(double)p.white_share, (double)p.white_brightness,
+			(double)p.blue_brightness, (double)p.blue_red, (double)p.blue_green,
+			(double)p.density_scale, (double)p.width_scale, (double)p.length_scale,
+			p.bloom_enabled ? "true" : "false", (unsigned)p.preview_seed, p.preview_ticks);
+		ImGui::SetClipboardText(data);
+	}
+	ImGui::TextDisabled("Session only: copied text is for calibration, not auto-loaded YAML.");
+	if (changed) XwaRemasterFlight_SetHyperspaceStreaks(&p);
+	ImGui::End();
+	if (!b) XwaRemasterFlight_SetHyperspaceStreakPreview(0);
+	*open = b ? 1 : 0;
+}
+
 /* ---- FSR 3.1.4 ------------------------------------------------------ */
 
 static void xwa_tool_fsr(int* open, void* user) {
@@ -1024,6 +1120,7 @@ extern "C" void XwaRemasterDebugTools_Register(void) {
 	Aeron_DebugRegisterTool("Point Lights", xwa_tool_point_lights, nullptr);
 	Aeron_DebugRegisterTool("Motion Blur", xwa_tool_motion_blur, nullptr);
 	Aeron_DebugRegisterTool("Hyperspace Tunnel", xwa_tool_hyperspace_tunnel, nullptr);
+	Aeron_DebugRegisterTool("Hyperspace Streaks", xwa_tool_hyperspace_streaks, nullptr);
 	Aeron_DebugRegisterTool("FSR 3.1.4", xwa_tool_fsr, nullptr);
 	Aeron_DebugRegisterTool("HDR & Display", xwa_tool_hdr, nullptr);
 	Aeron_DebugRegisterTool("HUD Snapshot", xwa_tool_hud_snapshot, nullptr);

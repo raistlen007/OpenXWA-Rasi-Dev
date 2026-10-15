@@ -70,6 +70,8 @@ struct XwaRemasterHyperspace {
 	uint8_t draw_background;
 	HyperStreakUniform streak_uniform;
 	XwaFlightHyperspaceTunnelParams params;
+	XwaFlightHyperspaceStreakParams streak_tuning;
+	int streak_preview;
 	HyperTunnelUniform tunnel_uniform;
 	XwaRemasterHyperspaceLighting lighting;
 };
@@ -242,6 +244,16 @@ XwaRemasterHyperspace* XwaRemasterHyperspace_Create(const XwaFlightHyperspaceTun
 		return NULL;
 	}
 	h->params = *params;
+	h->streak_tuning.white_share = 0.75f;
+	h->streak_tuning.white_brightness = 1.0f;
+	h->streak_tuning.blue_brightness = 1.0f;
+	h->streak_tuning.blue_red = 0.28f;
+	h->streak_tuning.blue_green = 0.40f;
+	h->streak_tuning.density_scale = 1.0f;
+	h->streak_tuning.width_scale = 1.0f;
+	h->streak_tuning.length_scale = 1.0f;
+	h->streak_tuning.preview_seed = 1u;
+	h->streak_tuning.preview_ticks = 390;
 	return h;
 }
 
@@ -250,6 +262,13 @@ void XwaRemasterHyperspace_SetParams(XwaRemasterHyperspace* h,
 	if (h && params) {
 		h->params = *params;
 	}
+}
+
+void XwaRemasterHyperspace_SetStreakTuning(XwaRemasterHyperspace* h,
+									const XwaFlightHyperspaceStreakParams* params, int preview) {
+	if (!h || !params) return;
+	h->streak_tuning = *params;
+	h->streak_preview = preview ? 1 : 0;
 }
 
 void XwaRemasterHyperspace_Destroy(XwaRemasterHyperspace* h) {
@@ -326,7 +345,7 @@ static uint32_t hyper_streak_visual_seed(const XwaHyperspaceStreak* streak) {
 
 static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak* streak, float extent,
 							  float transition_y, const float camera_rows[9], float x_scale,
-							  int supplemental) {
+							  int supplemental, const XwaFlightHyperspaceStreakParams* tuning) {
 	XwaFlightObject synthetic;
 	memset(&synthetic, 0, sizeof synthetic);
 	synthetic.orient_dirty = 1;
@@ -342,7 +361,8 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	const float brightness_jitter = (float)((variation >> 16) & 255u) / 255.0f;
 	/* Shader normalizes the apparent width after projection. */
 	const float half = (float)streak->half_width * model_units_to_meters;
-	const float film_half_width_px = 0.66f + 0.52f * width_jitter;
+	const float film_half_width_px = (0.66f + 0.52f * width_jitter) *
+		(tuning ? tuning->width_scale : 1.0f);
 
 	/* Treat each existing radial streak as a bounded part of a zoom exposure.
 	 * Its perspective projection already makes trails farther from the axis
@@ -366,7 +386,8 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	const float shutter_start = (supplemental ? 0.025f : 0.055f) +
 								(supplemental ? 0.41f : 0.55f) * start_jitter;
 	const float shutter_duration = (0.17f + 0.34f * duration_jitter) *
-									(0.54f + 0.88f * radial_weight);
+									(0.54f + 0.88f * radial_weight) *
+									(tuning ? tuning->length_scale : 1.0f);
 	const float shutter_end = fminf(0.97f, shutter_start + shutter_duration);
 	const float visible_span = shutter_end - shutter_start;
 	const float exposure_start = extent * model_units_to_meters * shutter_start;
@@ -384,7 +405,23 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 		{ 0.91f, 0.95f, 1.00f }, { 0.59f, 0.81f, 1.00f },
 	};
 	const float* tint = film_tints[(variation >> 24) & 7u];
-	const float intensity = (0.48f + 0.22f * brightness_jitter) * exposure_brightness;
+	float intensity = (0.48f + 0.22f * brightness_jitter) * exposure_brightness;
+	float live_tint[3];
+	if (tuning) {
+		/* Keep these as actual RGB values; do not infer blue hue from a
+		 * cyan/violet formula. Existing additive blending handles overlaps. */
+		uint32_t color_hash = hyper_streak_visual_seed(streak) ^ tuning->preview_seed;
+		color_hash ^= color_hash >> 16;
+		color_hash *= 0x7feb352du;
+		color_hash ^= color_hash >> 15;
+		const float color_jitter = (float)((color_hash >> 8) & 255u) / 255.0f;
+		const int white = color_jitter < tuning->white_share;
+		live_tint[0] = white ? 0.965f : tuning->blue_red;
+		live_tint[1] = white ? 0.980f : tuning->blue_green;
+		live_tint[2] = 1.0f;
+		tint = live_tint;
+		intensity *= white ? tuning->white_brightness : tuning->blue_brightness;
+	}
 	const float corners[4][3] = {
 		{ half, exposure_start, 0.0f },
 		{ half, exposure_end, 0.0f },
@@ -438,8 +475,10 @@ static void hyper_derive_film_streak(const XwaHyperspaceStreak* source,
 	hash ^= hash >> 16;
 	const float r = (float)(hash & 65535u) / 65535.0f;
 	const float a = (float)(hash >> 16) / 65535.0f;
-	const float radial_scale = variant == 0u ? 0.18f + 0.34f * r : 0.56f + 0.41f * r;
-	const float angle = (a - 0.5f) * (variant == 0u ? 0.36f : 0.27f);
+	const float radial_scale = variant == 0u ? 0.18f + 0.34f * r :
+		(variant == 1u ? 0.56f + 0.41f * r : 0.16f + 0.79f * r);
+	const float angle = (a - 0.5f) * (variant == 0u ? 0.36f :
+		(variant == 1u ? 0.27f : 0.30f + 0.06f * (float)(variant % 3u)));
 	const float sine = sinf(angle), cosine = cosf(angle);
 	const float x = (float)source->offset[0] * radial_scale;
 	const float z = (float)source->offset[2] * radial_scale;
@@ -609,8 +648,12 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 	memcpy(h->streak_uniform.view_proj, view_proj, sizeof h->streak_uniform.view_proj);
 	h->streak_uniform.viewport[0] = (float)rt_w;
 	h->streak_uniform.viewport[1] = (float)rt_h;
-	const uint8_t phase = force_tunnel ? XWA_HYPERSPACE_TUNNEL : snap->hyperspace.phase;
-	const uint32_t ticks = force_tunnel ? 0u : snap->hyperspace.phase_elapsed_ticks;
+	/* Streak preview freezes the rendered outbound frame only. */
+	const int streak_preview = h->streak_preview && !force_tunnel;
+	const uint8_t phase = force_tunnel ? XWA_HYPERSPACE_TUNNEL :
+		(streak_preview ? XWA_HYPERSPACE_OUTBOUND : snap->hyperspace.phase);
+	const uint32_t ticks = force_tunnel ? 0u :
+		(streak_preview ? (uint32_t)h->streak_tuning.preview_ticks : snap->hyperspace.phase_elapsed_ticks);
 	if (phase == XWA_HYPERSPACE_TUNNEL) {
 		if (tunnel_view) {
 			h->tunnel_uniform.projection[0] = tunnel_view->tan_half_fov_x;
@@ -683,13 +726,44 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 	}
 	hyper_build_transition_lighting(h, flash_alpha);
 
+	/* Reproduce a seed field outside real hyperspace. This is private render
+	 * data, never written to simulation state or the game's RNG streams. */
+	XwaHyperspaceStreak synthetic[512];
+	const XwaHyperspaceStreak* seeds = snap->hyperspace_streaks;
 	uint32_t count = snap->hyperspace_streak_count;
+	if (streak_preview) {
+		count = 512u;
+		for (uint32_t i = 0; i < count; i++) {
+			uint32_t h1 = (i + 1u) * 0x9e3779b9u ^ h->streak_tuning.preview_seed;
+			h1 ^= h1 >> 16; h1 *= 0x7feb352du;
+			h1 ^= h1 >> 15; h1 *= 0x846ca68bu; h1 ^= h1 >> 16;
+			uint32_t h2 = h1 ^ 0xa58f3421u;
+			h2 ^= h2 >> 16; h2 *= 0x7feb352du;
+			h2 ^= h2 >> 15; h2 *= 0x846ca68bu; h2 ^= h2 >> 16;
+			const float x = ((float)(h1 & 65535u) / 65535.0f - 0.5f) * 16000.0f;
+			const float z = ((float)(h2 & 65535u) / 65535.0f - 0.5f) * 11000.0f;
+			synthetic[i].offset[0] = (int32_t)x;
+			synthetic[i].offset[1] = 0x4000;
+			synthetic[i].offset[2] = (int32_t)z;
+			synthetic[i].half_width = 1;
+			synthetic[i].roll =
+				(uint16_t)((int32_t)(atan2f(z, x) * (65536.0f / 6.28318530718f)) + 0x4000);
+		}
+		seeds = synthetic;
+	}
 	if (count > XWA_SNAP_MAX_HYPERSPACE_STREAKS)
 		count = XWA_SNAP_MAX_HYPERSPACE_STREAKS;
-	/* Up to 3072 exposure marks from 1024 original game seeds, one draw call. */
-	const uint32_t vertex_count = count * 3u * 6u;
-	const uint32_t bytes = vertex_count * (uint32_t)sizeof(HyperStreakVertex);
-	if (vertex_count) {
+	/* Smooth density adjustment with stable partial companion populations.
+	 * Three complete marks per seed at density 1.0 (original baseline). */
+	const XwaFlightHyperspaceStreakParams* tuning =
+		phase == XWA_HYPERSPACE_OUTBOUND ? &h->streak_tuning : NULL;
+	const float marks_per_seed = tuning ? 3.0f * tuning->density_scale : 3.0f;
+	const uint32_t full_marks = (uint32_t)floorf(marks_per_seed);
+	const uint32_t supplement_count = (uint32_t)ceilf(marks_per_seed) - 1u;
+	const float fractional = marks_per_seed - (float)full_marks;
+	const uint32_t vertex_capacity = count * (1u + supplement_count) * 6u;
+	const uint32_t bytes = vertex_capacity * (uint32_t)sizeof(HyperStreakVertex);
+	if (vertex_capacity) {
 		if (!hyper_ensure_streak_buffer(h, bytes)) {
 			return 0;
 		}
@@ -699,24 +773,35 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 		}
 		const float target_aspect = rt_h > 0 ? (float)rt_w / (float)rt_h : 4.0f / 3.0f;
 		const float x_scale = target_aspect > 4.0f / 3.0f ? target_aspect / (4.0f / 3.0f) : 1.0f;
+		uint32_t written = 0;
 		for (uint32_t i = 0; i < count; i++) {
-			hyper_emit_streak(&verts[i * 6u], &snap->hyperspace_streaks[i], extent, transition_y, camera_rows,
-							  x_scale, 0);
+			hyper_emit_streak(&verts[written++ * 6u], &seeds[i], extent, transition_y, camera_rows,
+							  x_scale, 0, tuning);
 		}
-		for (uint32_t variant = 0; variant < 2u; variant++) {
+		for (uint32_t variant = 0; variant < supplement_count; variant++) {
 			for (uint32_t i = 0; i < count; i++) {
+				if (variant + 2u > full_marks) {
+					uint32_t jitter = (i + 17u) * 0x9e3779b9u ^
+						((variant + 1u) * 0x85ebca6bu) ^
+						(tuning ? tuning->preview_seed : 0u);
+					jitter ^= jitter >> 16; jitter *= 0x7feb352du;
+					jitter ^= jitter >> 15;
+					if ((float)(jitter & 65535u) / 65535.0f >= fractional) continue;
+				}
 				XwaHyperspaceStreak derived;
-				hyper_derive_film_streak(&snap->hyperspace_streaks[i], &derived, variant);
-				hyper_emit_streak(&verts[(count * (variant + 1u) + i) * 6u],
-									  &derived, extent, transition_y, camera_rows, x_scale, 1);
+				hyper_derive_film_streak(&seeds[i], &derived, variant);
+				hyper_emit_streak(&verts[written++ * 6u],
+									  &derived, extent, transition_y, camera_rows, x_scale, 1, tuning);
 			}
 		}
-		if (!Aeron_UploadBufferDataCmd(cmd, h->streak_vb, 0, verts, bytes)) {
+		/* Only upload initialized quads; the capacity includes partial-ring slack. */
+		const uint32_t used_bytes = written * 6u * (uint32_t)sizeof(HyperStreakVertex);
+		if (!Aeron_UploadBufferDataCmd(cmd, h->streak_vb, 0, verts, used_bytes)) {
 			free(verts);
 			return 0;
 		}
 		free(verts);
-		h->streak_vertex_count = vertex_count;
+		h->streak_vertex_count = written * 6u;
 	}
 	return h->draw_background || h->streak_vertex_count != 0;
 }

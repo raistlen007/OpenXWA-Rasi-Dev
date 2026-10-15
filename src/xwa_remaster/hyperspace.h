@@ -34,6 +34,8 @@ XwaRemasterHyperspace* XwaRemasterHyperspace_Create(const XwaFlightHyperspaceTun
 void XwaRemasterHyperspace_Destroy(XwaRemasterHyperspace* hyperspace);
 void XwaRemasterHyperspace_SetParams(XwaRemasterHyperspace* hyperspace,
 									 const XwaFlightHyperspaceTunnelParams* params);
+void XwaRemasterHyperspace_SetStreakTuning(XwaRemasterHyperspace* hyperspace,
+									 const XwaFlightHyperspaceStreakParams* params, int preview);
 
 /* Builds the analytic background state and uploads state-derived streak geometry.
  * Must run before AeronScene_Render opens its render passes. */

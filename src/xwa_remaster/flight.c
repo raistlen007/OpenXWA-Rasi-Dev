@@ -227,6 +227,9 @@ static struct {
 	XwaFlightHyperspaceTunnelParams hyperspace_params_default;
 	int hyperspace_preview;
 	uint64_t hyperspace_preview_epoch_us;
+	XwaFlightHyperspaceStreakParams streak_tuning;
+	int streak_preview;
+	int streak_bloom_suppressed;
 
 	const XwaSnapshot* snap;
 	/* Camera world->eye rows re-derived from the quaternion the scene
@@ -601,12 +604,30 @@ static int fl_pbr_config_valid(const XwaShipPbrTuning* p) {
 		   p->ambient[2] >= 0.0f;
 }
 
+/* Debug-tuner starting values; not a film-accuracy preset. */
+static XwaFlightHyperspaceStreakParams fl_streak_defaults(void) {
+	return (XwaFlightHyperspaceStreakParams) {
+		.white_share = 0.75f,
+		.white_brightness = 1.0f,
+		.blue_brightness = 1.0f,
+		.blue_red = 0.28f,
+		.blue_green = 0.40f,
+		.density_scale = 1.0f,
+		.width_scale = 1.0f,
+		.length_scale = 1.0f,
+		.preview_seed = 1u,
+		.preview_ticks = 390,
+		.bloom_enabled = 0,
+	};
+}
+
 /* Load the renderer's settings from the mandatory shipped configuration once. */
 int XwaRemasterFlight_InitConfig(AeronVfs* vfs) {
 	AeronSceneTonemapSettings tonemap;
 	if (s.config_loaded) {
 		return 1;
 	}
+	s.streak_tuning = fl_streak_defaults();
 
 	static const char* scene_defaults_path = "aeron/scene3d_defaults.yaml";
 	AeronConfigFile* scene_defaults = NULL;
@@ -1267,6 +1288,7 @@ void XwaRemasterFlight_GetHyperspaceTunnelDefault(XwaFlightHyperspaceTunnelParam
 
 void XwaRemasterFlight_SetHyperspaceTunnelPreview(int enabled) {
 	const int next = enabled ? 1 : 0;
+	if (next) s.streak_preview = 0;
 	if (next && !s.hyperspace_preview) {
 		s.hyperspace_preview_epoch_us = XwaTime_GetElapsedUs();
 	}
@@ -1274,6 +1296,43 @@ void XwaRemasterFlight_SetHyperspaceTunnelPreview(int enabled) {
 }
 
 int XwaRemasterFlight_HyperspaceTunnelPreviewEnabled(void) { return s.hyperspace_preview; }
+
+/* Live adjustments are session-only and deliberately not stored in config.yaml. */
+void XwaRemasterFlight_GetHyperspaceStreaks(XwaFlightHyperspaceStreakParams* out) {
+	if (out) *out = s.config_loaded ? s.streak_tuning : fl_streak_defaults();
+}
+void XwaRemasterFlight_GetHyperspaceStreaksDefault(XwaFlightHyperspaceStreakParams* out) {
+	if (out) *out = fl_streak_defaults();
+}
+void XwaRemasterFlight_SetHyperspaceStreaks(const XwaFlightHyperspaceStreakParams* in) {
+	if (!in || !s.config_loaded) return;
+	XwaFlightHyperspaceStreakParams p = *in;
+	const XwaFlightHyperspaceStreakParams def = fl_streak_defaults();
+	if (!isfinite(p.white_share)) p.white_share = def.white_share;
+	if (!isfinite(p.white_brightness)) p.white_brightness = def.white_brightness;
+	if (!isfinite(p.blue_brightness)) p.blue_brightness = def.blue_brightness;
+	if (!isfinite(p.blue_red)) p.blue_red = def.blue_red;
+	if (!isfinite(p.blue_green)) p.blue_green = def.blue_green;
+	if (!isfinite(p.density_scale)) p.density_scale = def.density_scale;
+	if (!isfinite(p.width_scale)) p.width_scale = def.width_scale;
+	if (!isfinite(p.length_scale)) p.length_scale = def.length_scale;
+	p.white_share = fminf(fmaxf(p.white_share, 0.0f), 1.0f);
+	p.white_brightness = fminf(fmaxf(p.white_brightness, 0.0f), 4.0f);
+	p.blue_brightness = fminf(fmaxf(p.blue_brightness, 0.0f), 4.0f);
+	p.blue_red = fminf(fmaxf(p.blue_red, 0.0f), 1.0f);
+	p.blue_green = fminf(fmaxf(p.blue_green, 0.0f), 1.0f);
+	p.density_scale = fminf(fmaxf(p.density_scale, 0.40f), 2.50f);
+	p.width_scale = fminf(fmaxf(p.width_scale, 0.25f), 3.0f);
+	p.length_scale = fminf(fmaxf(p.length_scale, 0.25f), 2.0f);
+	p.preview_ticks = p.preview_ticks < 40 ? 40 : (p.preview_ticks > 471 ? 471 : p.preview_ticks);
+	p.bloom_enabled = p.bloom_enabled ? 1 : 0;
+	s.streak_tuning = p;
+}
+void XwaRemasterFlight_SetHyperspaceStreakPreview(int enabled) {
+	s.streak_preview = enabled ? 1 : 0;
+	if (s.streak_preview) s.hyperspace_preview = 0;
+}
+int XwaRemasterFlight_HyperspaceStreakPreviewEnabled(void) { return s.streak_preview; }
 
 void XwaRemasterFlight_GetTemporal(XwaFlightTemporalParams* out) {
 	if (!out) {
@@ -3382,7 +3441,7 @@ static AeronTexture* fl_present(AeronCommandBuffer* cmd, int direct_present) {
 		s.direct_ready = 0;
 		return NULL;
 	}
-	if (!s.map_present && s.bloom && AeronSceneBloom_Intensity() > 0.0f) {
+	if (!s.map_present && !s.streak_bloom_suppressed && s.bloom && AeronSceneBloom_Intensity() > 0.0f) {
 		if (!AeronSceneBloom_Apply(s.bloom, cmd, s.present_scene_tex, s.rt_w, s.rt_h, s.rt_h)) {
 			Aeron_CommandBufferSetFailure(cmd, "Flight bloom recording failed");
 			return NULL;
@@ -3453,6 +3512,10 @@ static AeronTexture* fl_render_hyperspace(AeronCommandBuffer* cmd, const XwaSnap
 	if (preview && host_time_us >= s.hyperspace_preview_epoch_us) {
 		const double elapsed_seconds = (double)(host_time_us - s.hyperspace_preview_epoch_us) / 1000000.0;
 		preview_time = (float)fmod(elapsed_seconds, 4096.0);
+	}
+	const int streak_preview = s.streak_preview && !preview && !snap->flight_camera.hyperspace_phase;
+	if (s.hyperspace) {
+		XwaRemasterHyperspace_SetStreakTuning(s.hyperspace, &s.streak_tuning, streak_preview);
 	}
 	if (!s.hyperspace ||
 		!XwaRemasterHyperspace_Prepare(s.hyperspace, cmd, snap, flight_view->view_proj, s.crows,
@@ -3548,6 +3611,8 @@ static AeronTexture* fl_render_hyperspace(AeronCommandBuffer* cmd, const XwaSnap
 	AeronScene_SetPassHook(s.scene, AERON_SCENE_HOOK_BEFORE_OPAQUE, NULL, NULL);
 	s.before_opaque_mode = FL_BEFORE_OPAQUE_NONE;
 	s.snap = NULL;
+	s.streak_bloom_suppressed = (streak_preview || snap->hyperspace.phase == XWA_HYPERSPACE_OUTBOUND)
+		&& !s.streak_tuning.bloom_enabled;
 	return fl_present(cmd, direct_present);
 }
 
@@ -3716,6 +3781,7 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 		return NULL;
 	}
 	const XwaFlightCamera* cam = &snap->flight_camera;
+	s.streak_bloom_suppressed = 0;
 	if (!fl_ensure(target_w, target_h)) {
 		return NULL;
 	}
@@ -3733,9 +3799,10 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 		return fl_render_map(cmd, snap, assets, &flight_view, host_time_us, direct_present);
 	}
 	s.map_present = 0;
-	const int hyperspace_preview = s.hyperspace_preview && !cam->hyperspace_phase;
-	s.suppress_hud = hyperspace_preview;
-	if (cam->hyperspace_phase || hyperspace_preview) {
+	const int streak_preview = s.streak_preview && !cam->hyperspace_phase;
+	const int hyperspace_preview = s.hyperspace_preview && !cam->hyperspace_phase && !streak_preview;
+	s.suppress_hud = hyperspace_preview || streak_preview;
+	if (cam->hyperspace_phase || hyperspace_preview || streak_preview) {
 		return fl_render_hyperspace(cmd, snap, assets, &flight_view, host_time_us, direct_present,
 									hyperspace_preview);
 	}
