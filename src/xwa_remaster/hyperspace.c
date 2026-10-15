@@ -356,13 +356,11 @@ static void hyper_choose_entry_style(XwaRemasterHyperspace* h) {
 	 * the game's random numbers or changing its original streak seeds. */
 	const uint32_t seed = hyper_style_mix((uint32_t)time(NULL) ^
 		(++h->entry_sequence * 0x9e3779b9u));
-	/* Every entry samples one coherent, slightly different blue-white mixture.
-	 * Even the palest entries retain clearly blue secondary streaks. */
-	h->entry_style.blue_strength = 0.98f + 0.12f * hyper_style_unit(seed ^ 0x62a9d9edu);
+	/* Choose a mostly white/blue-white look with 20-30% cobalt streaks.
+	 * Parameters vary between jumps, without separate film-style presets. */
+	h->entry_style.blue_strength = 0.92f + 0.08f * hyper_style_unit(seed ^ 0x62a9d9edu);
 	h->entry_style.cyan_bias = hyper_style_unit(seed ^ 0xa58f3421u);
-	/* Keep white highlights exceptional rather than allowing them to
-	 * overpower the blue population as many streaks overlap. */
-	h->entry_style.white_share = 0.09f + 0.07f * hyper_style_unit(seed ^ 0x147c861bu);
+	h->entry_style.white_share = 0.70f + 0.10f * hyper_style_unit(seed ^ 0x147c861bu);
 	h->entry_style.width_scale = 0.91f + 0.18f * hyper_style_unit(seed ^ 0x3c4fa278u);
 	h->entry_style.intensity_scale = 0.94f + 0.14f * hyper_style_unit(seed ^ 0xef042d6bu);
 	h->entry_style_valid = 1;
@@ -447,37 +445,34 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	float intensity = (0.48f + 0.22f * brightness_jitter) * exposure_brightness;
 	float entry_tint[3];
 	if (entry_style) {
-		/* Split intensity and color, not the image into a single timid pastel
-		 * distribution. Bright white-blue marks coexist with distinctly blue
-		 * ones; each jump drifts within a continuous range, not film presets. */
+		/* Most marks are brilliant blue-white. A 20-30% minority has
+		 * distinct cobalt-blue coloring; both still use additive blending. */
 		const float color_jitter = (float)((variation >> 8) & 255u) / 255.0f;
 		const float hue_jitter = (float)((variation >> 24) & 255u) / 255.0f;
-		/* Most marks span violet-blue to cobalt, while a narrow high-end
-		 * tail (approximately four percent) remains cyan-blue. */
-		const float hue = 0.20f * entry_style->cyan_bias + 0.80f * hue_jitter;
-		const float cyan_tail = hue_jitter > 0.96f ?
-			(hue_jitter - 0.96f) / 0.04f : 0.0f;
-		float chroma;
 		if (color_jitter < entry_style->white_share) {
-			/* Retain the existing hot-white peak intensity, but give even
-			 * these highlights a small icy-blue tint. No bloom is added. */
-			chroma = 0.12f + 0.08f * color_jitter / entry_style->white_share;
+			/* Hot white with a very slight cool tint. */
+			const float cool = 0.018f + 0.024f * hue_jitter;
+			entry_tint[0] = 1.0f - cool * 1.3f;
+			entry_tint[1] = 1.0f - cool * 0.8f;
+			entry_tint[2] = 1.0f;
 			intensity = 1.70f + 0.65f * brightness_jitter;
 		} else {
-			/* Saturation must survive the HDR tonemapper even in bright streaks. */
+			/* Strong blue accents without the previous cyan/violet extremes. */
 			const float blue_jitter = (color_jitter - entry_style->white_share) /
 				(1.0f - entry_style->white_share);
-			chroma = fminf(1.0f, (0.82f + 0.18f * blue_jitter) *
+			const float chroma = fminf(1.0f, (0.82f + 0.16f * blue_jitter) *
 				entry_style->blue_strength);
-			/* Make colored marks bright enough to remain visible beside
-			 * the white cores, without flattening their saturation. */
+			const float hue = 2.0f * hue_jitter - 1.0f;
+			entry_tint[0] = 1.0f - chroma * (0.62f + 0.025f * hue);
+			entry_tint[1] = 1.0f - chroma * (0.60f - 0.025f * hue);
+			entry_tint[2] = 1.0f;
+			/* White/blue overlaps brighten under additive blending. Gently
+			 * whiten isolated blue lines near the more crowded visual center. */
+			const float center_whiten = 0.40f * (1.0f - radial_weight);
+			entry_tint[0] += (1.0f - entry_tint[0]) * center_whiten;
+			entry_tint[1] += (1.0f - entry_tint[1]) * center_whiten;
 			intensity = 1.17f + 0.42f * brightness_jitter;
 		}
-		/* Suppress the green-heavy cyan hue of the previous pass.
-		 * Keep clear cobalt/indigo and violet-blue, with rare cyan accents. */
-		entry_tint[0] = 1.0f - chroma * (0.68f + 0.20f * hue);
-		entry_tint[1] = 1.0f - chroma * (0.90f - 0.16f * hue - 0.45f * cyan_tail);
-		entry_tint[2] = 1.0f;
 		tint = entry_tint;
 		intensity *= exposure_brightness * entry_style->intensity_scale;
 	}
@@ -534,9 +529,8 @@ static void hyper_derive_film_streak(const XwaHyperspaceStreak* source,
 	hash ^= hash >> 16;
 	const float r = (float)(hash & 65535u) / 65535.0f;
 	const float a = (float)(hash >> 16) / 65535.0f;
-	/* Preserve the original two companions for outbound and inbound.
-	 * Two additional outbound-only companions fill the inner and middle
-	 * radii instead of just increasing existing line thickness. */
+	/* Preserve the original two companions for inbound.
+	 * Three extra outbound companions spread across inner and middle radii. */
 	float radial_scale = variant == 0u ? 0.18f + 0.34f * r : 0.56f + 0.41f * r;
 	float angle_spread = variant == 0u ? 0.36f : 0.27f;
 	if (variant == 2u) {
@@ -545,6 +539,9 @@ static void hyper_derive_film_streak(const XwaHyperspaceStreak* source,
 	} else if (variant == 3u) {
 		radial_scale = 0.38f + 0.49f * r;
 		angle_spread = 0.32f;
+	} else if (variant == 4u) {
+		radial_scale = 0.22f + 0.62f * r;
+		angle_spread = 0.44f;
 	}
 	const float angle = (a - 0.5f) * angle_spread;
 	const float sine = sinf(angle), cosine = cosf(angle);
@@ -806,9 +803,9 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 	uint32_t count = snap->hyperspace_streak_count;
 	if (count > XWA_SNAP_MAX_HYPERSPACE_STREAKS)
 		count = XWA_SNAP_MAX_HYPERSPACE_STREAKS;
-	/* Up to 5120 entry marks from 1024 game seeds, still one draw call.
-	 * Inbound remains at the prior 3072 marks until exit is calibrated. */
-	const uint32_t supplemental_count = phase == XWA_HYPERSPACE_OUTBOUND ? 4u : 2u;
+	/* Up to 6144 entry marks (+20%) from 1024 game seeds, one draw call.
+	 * Inbound remains at 3072 until exit calibration. */
+	const uint32_t supplemental_count = phase == XWA_HYPERSPACE_OUTBOUND ? 5u : 2u;
 	const uint32_t vertex_count = count * (1u + supplemental_count) * 6u;
 	const uint32_t bytes = vertex_count * (uint32_t)sizeof(HyperStreakVertex);
 	if (vertex_count) {
