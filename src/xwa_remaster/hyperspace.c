@@ -25,6 +25,7 @@ typedef struct HyperStreakVertex {
 typedef struct HyperEntryStreakStyle {
 	float blue_strength;
 	float cyan_bias;
+	float white_share;
 	float width_scale;
 	float intensity_scale;
 } HyperEntryStreakStyle;
@@ -355,8 +356,11 @@ static void hyper_choose_entry_style(XwaRemasterHyperspace* h) {
 	 * the game's random numbers or changing its original streak seeds. */
 	const uint32_t seed = hyper_style_mix((uint32_t)time(NULL) ^
 		(++h->entry_sequence * 0x9e3779b9u));
-	h->entry_style.blue_strength = 0.58f + 0.54f * hyper_style_unit(seed ^ 0x62a9d9edu);
+	/* Every entry samples one coherent, slightly different blue-white mixture.
+	 * Even the palest entries retain clearly blue secondary streaks. */
+	h->entry_style.blue_strength = 0.90f + 0.26f * hyper_style_unit(seed ^ 0x62a9d9edu);
 	h->entry_style.cyan_bias = hyper_style_unit(seed ^ 0xa58f3421u);
+	h->entry_style.white_share = 0.23f + 0.12f * hyper_style_unit(seed ^ 0x147c861bu);
 	h->entry_style.width_scale = 0.91f + 0.18f * hyper_style_unit(seed ^ 0x3c4fa278u);
 	h->entry_style.intensity_scale = 0.94f + 0.14f * hyper_style_unit(seed ^ 0xef042d6bu);
 	h->entry_style_valid = 1;
@@ -441,19 +445,31 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 	float intensity = (0.48f + 0.22f * brightness_jitter) * exposure_brightness;
 	float entry_tint[3];
 	if (entry_style) {
-		/* Most trails retain white-blue cores; other trails range from
-		 * violet-blue to cyan-blue. Hue and saturation drift together
-		 * between jumps without selecting any particular movie profile. */
+		/* Split intensity and color, not the image into a single timid pastel
+		 * distribution. Bright white-blue marks coexist with distinctly blue
+		 * ones; each jump drifts within a continuous range, not film presets. */
 		const float color_jitter = (float)((variation >> 8) & 255u) / 255.0f;
-		const float chroma = fminf(1.0f, entry_style->blue_strength *
-			(0.12f + 0.88f * color_jitter * color_jitter));
-		entry_tint[0] = 0.97f - chroma * (0.47f + 0.14f * entry_style->cyan_bias);
-		entry_tint[1] = 0.97f - chroma * (0.35f - 0.17f * entry_style->cyan_bias);
+		const float hue_jitter = (float)((variation >> 24) & 255u) / 255.0f;
+		const float hue = 0.42f * entry_style->cyan_bias + 0.58f * hue_jitter;
+		float chroma;
+		if (color_jitter < entry_style->white_share) {
+			/* Keep these nearly neutral but genuinely luminous, without bloom. */
+			chroma = 0.035f + 0.090f * color_jitter / entry_style->white_share;
+			intensity = 1.70f + 0.65f * brightness_jitter;
+		} else {
+			/* Saturation must survive the HDR tonemapper even in bright streaks. */
+			const float blue_jitter = (color_jitter - entry_style->white_share) /
+				(1.0f - entry_style->white_share);
+			chroma = fminf(1.0f, (0.68f + 0.30f * blue_jitter) *
+				entry_style->blue_strength);
+			intensity = 0.90f + 0.42f * brightness_jitter;
+		}
+		/* Violet-blue at the low end of hue, cyan-blue at the high end. */
+		entry_tint[0] = 1.0f - chroma * (0.62f + 0.13f * hue);
+		entry_tint[1] = 1.0f - chroma * (0.72f - 0.46f * hue);
 		entry_tint[2] = 1.0f;
 		tint = entry_tint;
-		/* Lift defined streak cores without manufacturing a soft halo. */
-		intensity = (0.62f + 0.30f * brightness_jitter) *
-			exposure_brightness * entry_style->intensity_scale;
+		intensity *= exposure_brightness * entry_style->intensity_scale;
 	}
 	const float corners[4][3] = {
 		{ half, exposure_start, 0.0f },
@@ -508,8 +524,19 @@ static void hyper_derive_film_streak(const XwaHyperspaceStreak* source,
 	hash ^= hash >> 16;
 	const float r = (float)(hash & 65535u) / 65535.0f;
 	const float a = (float)(hash >> 16) / 65535.0f;
-	const float radial_scale = variant == 0u ? 0.18f + 0.34f * r : 0.56f + 0.41f * r;
-	const float angle = (a - 0.5f) * (variant == 0u ? 0.36f : 0.27f);
+	/* Preserve the original two companions for outbound and inbound.
+	 * Two additional outbound-only companions fill the inner and middle
+	 * radii instead of just increasing existing line thickness. */
+	float radial_scale = variant == 0u ? 0.18f + 0.34f * r : 0.56f + 0.41f * r;
+	float angle_spread = variant == 0u ? 0.36f : 0.27f;
+	if (variant == 2u) {
+		radial_scale = 0.10f + 0.35f * r;
+		angle_spread = 0.46f;
+	} else if (variant == 3u) {
+		radial_scale = 0.38f + 0.49f * r;
+		angle_spread = 0.32f;
+	}
+	const float angle = (a - 0.5f) * angle_spread;
 	const float sine = sinf(angle), cosine = cosf(angle);
 	const float x = (float)source->offset[0] * radial_scale;
 	const float z = (float)source->offset[2] * radial_scale;
@@ -769,8 +796,10 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 	uint32_t count = snap->hyperspace_streak_count;
 	if (count > XWA_SNAP_MAX_HYPERSPACE_STREAKS)
 		count = XWA_SNAP_MAX_HYPERSPACE_STREAKS;
-	/* Up to 3072 exposure marks from 1024 original game seeds, one draw call. */
-	const uint32_t vertex_count = count * 3u * 6u;
+	/* Up to 5120 entry marks from 1024 game seeds, still one draw call.
+	 * Inbound remains at the prior 3072 marks until exit is calibrated. */
+	const uint32_t supplemental_count = phase == XWA_HYPERSPACE_OUTBOUND ? 4u : 2u;
+	const uint32_t vertex_count = count * (1u + supplemental_count) * 6u;
 	const uint32_t bytes = vertex_count * (uint32_t)sizeof(HyperStreakVertex);
 	if (vertex_count) {
 		if (!hyper_ensure_streak_buffer(h, bytes)) {
@@ -786,7 +815,7 @@ int XwaRemasterHyperspace_Prepare(XwaRemasterHyperspace* h, AeronCommandBuffer* 
 			hyper_emit_streak(&verts[i * 6u], &snap->hyperspace_streaks[i], extent, transition_y, camera_rows,
 							  x_scale, 0, entry_style);
 		}
-		for (uint32_t variant = 0; variant < 2u; variant++) {
+		for (uint32_t variant = 0; variant < supplemental_count; variant++) {
 			for (uint32_t i = 0; i < count; i++) {
 				XwaHyperspaceStreak derived;
 				hyper_derive_film_streak(&snap->hyperspace_streaks[i], &derived, variant);
