@@ -358,9 +358,11 @@ static void hyper_choose_entry_style(XwaRemasterHyperspace* h) {
 		(++h->entry_sequence * 0x9e3779b9u));
 	/* Every entry samples one coherent, slightly different blue-white mixture.
 	 * Even the palest entries retain clearly blue secondary streaks. */
-	h->entry_style.blue_strength = 0.90f + 0.26f * hyper_style_unit(seed ^ 0x62a9d9edu);
+	h->entry_style.blue_strength = 0.98f + 0.12f * hyper_style_unit(seed ^ 0x62a9d9edu);
 	h->entry_style.cyan_bias = hyper_style_unit(seed ^ 0xa58f3421u);
-	h->entry_style.white_share = 0.23f + 0.12f * hyper_style_unit(seed ^ 0x147c861bu);
+	/* Keep white highlights exceptional rather than allowing them to
+	 * overpower the blue population as many streaks overlap. */
+	h->entry_style.white_share = 0.09f + 0.07f * hyper_style_unit(seed ^ 0x147c861bu);
 	h->entry_style.width_scale = 0.91f + 0.18f * hyper_style_unit(seed ^ 0x3c4fa278u);
 	h->entry_style.intensity_scale = 0.94f + 0.14f * hyper_style_unit(seed ^ 0xef042d6bu);
 	h->entry_style_valid = 1;
@@ -453,20 +455,24 @@ static void hyper_emit_streak(HyperStreakVertex* out, const XwaHyperspaceStreak*
 		const float hue = 0.42f * entry_style->cyan_bias + 0.58f * hue_jitter;
 		float chroma;
 		if (color_jitter < entry_style->white_share) {
-			/* Keep these nearly neutral but genuinely luminous, without bloom. */
-			chroma = 0.035f + 0.090f * color_jitter / entry_style->white_share;
+			/* Retain the existing hot-white peak intensity, but give even
+			 * these highlights a small icy-blue tint. No bloom is added. */
+			chroma = 0.12f + 0.08f * color_jitter / entry_style->white_share;
 			intensity = 1.70f + 0.65f * brightness_jitter;
 		} else {
 			/* Saturation must survive the HDR tonemapper even in bright streaks. */
 			const float blue_jitter = (color_jitter - entry_style->white_share) /
 				(1.0f - entry_style->white_share);
-			chroma = fminf(1.0f, (0.68f + 0.30f * blue_jitter) *
+			chroma = fminf(1.0f, (0.82f + 0.18f * blue_jitter) *
 				entry_style->blue_strength);
-			intensity = 0.90f + 0.42f * brightness_jitter;
+			/* Make colored marks bright enough to remain visible beside
+			 * the white cores, without flattening their saturation. */
+			intensity = 1.17f + 0.42f * brightness_jitter;
 		}
-		/* Violet-blue at the low end of hue, cyan-blue at the high end. */
-		entry_tint[0] = 1.0f - chroma * (0.62f + 0.13f * hue);
-		entry_tint[1] = 1.0f - chroma * (0.72f - 0.46f * hue);
+		/* Strong violet-blue through cobalt to cyan-blue: the red and
+		 * green channels stay well below blue even after tonemapping. */
+		entry_tint[0] = 1.0f - chroma * (0.67f + 0.30f * hue);
+		entry_tint[1] = 1.0f - chroma * (0.85f - 0.57f * hue);
 		entry_tint[2] = 1.0f;
 		tint = entry_tint;
 		intensity *= exposure_brightness * entry_style->intensity_scale;
