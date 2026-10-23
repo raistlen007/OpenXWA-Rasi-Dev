@@ -431,7 +431,7 @@ else()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_custom_command(TARGET xwa POST_BUILD
         COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/model_limits/generate_missions.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/model-limits/generate_missions.py"
             "$<TARGET_FILE_DIR:xwa>/resources/model-limits/combat"
         COMMENT "Generating OpenXWA mission-coordinate model-limit tests"
         VERBATIM
