@@ -10,6 +10,7 @@
 #include "xwa/flight/mission/mission.h"
 #include "xwa/flight/net_session.h"
 #include "xwa/frontend/briefing_script.h"
+#include "xwa/frontend/combat_sim_menu.h"
 #include "xwa/frontend/concourse.h"
 #include "xwa/frontend/family_transport_room.h"
 #include "xwa/frontend/flight_loading.h"
@@ -66,6 +67,8 @@ MissionListEntry* g_missionList = NULL;
 int g_missionCount;
 // GLOBAL: XWA 0x9F5E74
 int g_selectedMissionListIndex;
+/* Only the dedicated Combat Simulator test entry activates this mode. */
+static int g_modelLimitsSessionActive;
 // GLOBAL: XWA 0x7838A0
 int g_missionSetupShipBmpGroupId;
 // GLOBAL: XWA 0xAE2A38
@@ -7602,6 +7605,17 @@ int MissionSetup_Update(int frameCounter) {
 			g_pilotData.factionStatistics[0].m0048 = 0;
 		}
 
+		/* Use the existing Combat mission loader, but start from the first
+		 * packaged test and leave the normal pilot's mission preference alone. */
+		g_modelLimitsSessionActive =
+			g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_SINGLEPLAYER &&
+			g_combatSimModelLimitsRequested;
+		g_combatSimModelLimitsRequested = 0;
+		if (g_modelLimitsSessionActive) {
+			g_pilotData.missionDirectoryId = MISSION_DIRECTORY_COMBAT;
+			g_pilotData.missionDescriptionIds[MISSION_DIRECTORY_COMBAT] = 240;
+		}
+
 		if (g_pilotData.missionDirectoryId != MISSION_DIRECTORY_SKIRMISH ||
 			g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_NET_CLIENT) {
 			g_frontendLeftBarPanelIndex = 2;
@@ -8648,7 +8662,11 @@ int MissionSetup_Exit(int frameCounter) {
 	}
 	FrontImage_FreeResourceByName("background");
 	MissionSetup_UnloadShipBmp();
-	if (g_missionSetupUseCombatSimPilotState) {
+	if (g_modelLimitsSessionActive) {
+		/* Do not save the test mission directory as the pilot's preference,
+		 * but restore the pilot field cleared on entering mission setup. */
+		g_pilotData.factionStatistics[g_pilotData.currentFactionId].m0048 = g_pilotData.unk2;
+	} else if (g_missionSetupUseCombatSimPilotState) {
 		g_pilotData.factionStatistics[2].team = g_pilotData.team;
 		g_pilotData.factionStatistics[2].missionDirectoryId = g_pilotData.missionDirectoryId;
 		memcpy(g_pilotData.factionStatistics[2].missionDescriptionIds, g_pilotData.missionDescriptionIds,
@@ -8668,6 +8686,7 @@ int MissionSetup_Exit(int frameCounter) {
 	MissionSetup_FreeBattleSprites();
 	FrontendCursor_SetImageResourceForCurrentTheme((char*)"cursor", g_cursorBitmap);
 	g_skirmishFileRandomSeed = g_gameConfig.randomSeed;
+	g_modelLimitsSessionActive = 0;
 	if (g_cachedCraftTechStats != NULL) {
 		Mem_Free(g_cachedCraftTechStats);
 		g_cachedCraftTechStats = NULL;

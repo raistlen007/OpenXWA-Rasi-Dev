@@ -11,7 +11,9 @@ not reposition either object for these tests.
 2. Compile OpenXWA with your normal build workflow.
 3. Launch the compiled build, selecting your existing, **unchanged** original
    X-Wing Alliance installation when prompted for game data.
-4. In Combat Simulator, select the `ZTest Model Limits` mission section.
+4. Open Combat Simulator and click **MODEL LIMITS** on the main Combat
+   Simulator screen. This opens the first test in Mission Setup. Use the
+   previous/next mission arrows to select the distance, then launch the mission.
 5. During flight, open the debug overlay with backquote and select
    `Model Limits`. Record the player's and cruiser's actual positions,
    distance, render-region status, and whether the HD mesh loaded.

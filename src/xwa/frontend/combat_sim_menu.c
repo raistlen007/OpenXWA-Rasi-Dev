@@ -33,6 +33,8 @@ enum {
 int g_combatSimMenuTranslucentFillColor;
 // GLOBAL: XWA 0x782FFC
 int g_combatSimMenuPendingTransition;
+/* A dedicated entry point into the branch-owned Combat mission test list. */
+int g_combatSimModelLimitsRequested;
 
 int MultiplayerSetup_Update(int frameCounter);
 #ifdef XWA_MODERN
@@ -53,6 +55,7 @@ int CombatSimMenu_Update(int frameCounter) {
 		g_combatSimMenuTranslucentFillColor = FrontendDisplay_PackRGB(0x60u, 0x0cu, 0x0cu);
 		FrontendText_SetGlyphGradientBg(g_combatSimMenuTranslucentFillColor);
 		g_combatSimMenuPendingTransition = 0;
+		g_combatSimModelLimitsRequested = 0;
 		g_activeTextFieldId = 0;
 
 		if (g_frontendMissionLoaded && (unsigned int)g_currentMissionId < 7u) {
@@ -298,6 +301,26 @@ int CombatSimMenu_Update(int frameCounter) {
 				FrontImage_DrawSprite("doors", 299, 90);
 			}
 		}
+	}
+
+	/* Enter the test mission list without changing the saved pilot's tour or
+	 * skirmish selection. The next mission-setup screen consumes this request. */
+	{
+		FrontendRect modelLimitsRect;
+		FrontendDraw_RectAssign(&modelLimitsRect, 36, 380, 256, 431);
+		color = g_colorPaleBlue;
+		if (FrontendDraw_PointInRect(&modelLimitsRect, mouseX, mouseY)) {
+			color = g_colorYellow;
+			if (FrontendMouse_GetLeftClick() || FrontendMouse_GetRightClick()) {
+				g_combatSimModelLimitsRequested = 1;
+				g_frontendMissionSessionMode = FRONTEND_MISSION_SESSION_SINGLEPLAYER;
+				g_combatSimMenuPendingTransition = COMBAT_SIM_MENU_PENDING_SINGLE_PLAYER;
+				memset(g_mpRoster, 0, sizeof(g_mpRoster));
+			}
+		}
+		FrontendDraw_FillRectTranslucent(&modelLimitsRect, 0, 0,
+				(unsigned int)g_combatSimMenuTranslucentFillColor);
+		FrontendText_DrawCentered(15, "MODEL LIMITS", &modelLimitsRect, color);
 	}
 
 	if (Frontend_HandleEscapeQuit(1) == 1) {

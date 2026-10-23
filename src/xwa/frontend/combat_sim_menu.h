@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+extern int g_combatSimModelLimitsRequested;
+
 int CombatSimMenu_Update(int frameCounter);
 int CombatSimMenu_Exit(int frameCounter);
 
