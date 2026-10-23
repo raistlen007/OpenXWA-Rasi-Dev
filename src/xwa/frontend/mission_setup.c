@@ -7879,7 +7879,9 @@ int MissionSetup_Update(int frameCounter) {
 		g_skipFrontendEntryMovie = 0;
 		if (MissionSetup_IsSkirmishSetupValid()) {
 			if (g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_SINGLEPLAYER) {
-				if (g_pilotData.missionDirectoryId != MISSION_DIRECTORY_TOUR) {
+				if (g_modelLimitsSessionActive) {
+					g_frontendRightBarPanelIndex = 3;
+				} else if (g_pilotData.missionDirectoryId != MISSION_DIRECTORY_TOUR) {
 					g_frontendRightBarPanelIndex =
 						(g_pilotData.missionDirectoryId != MISSION_DIRECTORY_SKIRMISH) + 2;
 				} else {
@@ -8239,7 +8241,14 @@ int MissionSetup_Update(int frameCounter) {
 			MissionSetup_DrawMissionDescriptionPanel();
 			break;
 	}
-	MissionSetup_DrawGameSettingsPanel();
+	if (g_modelLimitsSessionActive) {
+		/* The test missions have fixed flight groups; normal game-setting tiles
+		 * are not applicable to this mission-space measurement screen. */
+		FrontendText_Draw(10, "Use the mission arrows to select a test distance.",
+				88, 380, g_colorLightBlue);
+	} else {
+		MissionSetup_DrawGameSettingsPanel();
+	}
 	MissionSetup_DrawUnassignedPlayersPanel(frameCounter);
 	changed = MissionSetup_DrawMissionTypeControls();
 	if (g_frontendMissionSessionMode != FRONTEND_MISSION_SESSION_SINGLEPLAYER && Net_IsHost() && changed) {
@@ -8252,7 +8261,15 @@ int MissionSetup_Update(int frameCounter) {
 	FrontendDraw_RectCopy(&rect, &g_frontendSidebarButtonRects[9]);
 	if (g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_SINGLEPLAYER) {
 		if (g_frontendRightBarAnimState == 1) {
-			if (MissionSetup_IsSkirmishSetupValid()) {
+			if (g_modelLimitsSessionActive && MissionSetup_IsSkirmishSetupValid()) {
+				/* The three-slot sidebar keeps Begin and Back in separate
+				 * controls; the two-slot layout overlaps both at slot 9. */
+				if (g_frontendRightBarPanelIndex != 3) {
+					g_frontendRightBarAnimState = 6;
+					FrontendSound_PlayUISound((char*)"panelarm", 1, 0, 255,
+							12 * g_gameConfig.sfxDatapadVolume, 63);
+				}
+			} else if (MissionSetup_IsSkirmishSetupValid()) {
 				if (g_pilotData.missionDirectoryId != MISSION_DIRECTORY_TOUR) {
 					if (g_frontendRightBarPanelIndex != 2) {
 						g_frontendRightBarAnimState = 4;
@@ -8351,7 +8368,8 @@ int MissionSetup_Update(int frameCounter) {
 	}
 
 	if (g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_SINGLEPLAYER &&
-		g_pilotData.missionDirectoryId != MISSION_DIRECTORY_SKIRMISH) {
+		g_pilotData.missionDirectoryId != MISSION_DIRECTORY_SKIRMISH &&
+		!g_modelLimitsSessionActive) {
 		FrontendDraw_RectCopy(&rect, &g_frontendSidebarButtonRects[8]);
 		if (g_frontendRightBarPanelIndex >= 3 && g_frontendRightBarAnimState == 1 &&
 			FrontendButton_DrawSpriteWithHoverText(
