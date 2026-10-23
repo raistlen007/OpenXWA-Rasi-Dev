@@ -420,6 +420,22 @@ else()
             $<TARGET_FILE_DIR:xwa>/resources
         COMMENT "Staging OpenXWA application resources"
     )
+    # Stage real mission-coordinate test files alongside branch-owned resources.
+    # The original game-data installation and engine spawn path are unchanged.
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/model-limits/flightmodels/calamaricruisernew.opt")
+        message(FATAL_ERROR
+            "Model-limit test OPT missing from the branch working tree. "
+            "Extract ZTest_Repo_Model_Overlay.zip into the repository root "
+            "before building. The original XWA installation must not be modified.")
+    endif()
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_custom_command(TARGET xwa POST_BUILD
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/model_limits/generate_missions.py"
+            "$<TARGET_FILE_DIR:xwa>/resources/model-limits/combat"
+        COMMENT "Generating OpenXWA mission-coordinate model-limit tests"
+        VERBATIM
+    )
 endif()
 
 if(WIN32)

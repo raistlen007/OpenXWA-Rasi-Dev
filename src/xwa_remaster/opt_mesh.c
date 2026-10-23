@@ -167,6 +167,16 @@ static size_t opt_resolve_alpha_overrides(const char* model_path,
 static int opt_read_model(AeronVfs* vfs, const char* basename, char* resolved,
 						  size_t resolved_size, uint8_t** out_bytes, size_t* out_size) {
 	char path[512];
+	/* The engine and HD renderer must read the same oversized cruiser from
+	 * the packaged test branch, without modifying the original game data. */
+	if (strcmp(basename, "calamaricruisernew") == 0) {
+		const char* test_path = "model-limits/flightmodels/calamaricruisernew.opt";
+		if (!AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_RESOURCE, test_path,
+				(size_t)kRuntimeOptMaxBytes, out_bytes, out_size))
+			return 0;
+		snprintf(resolved, resolved_size, "%s", test_path);
+		return 1;
+	}
 	snprintf(path, sizeof path, "FLIGHTMODELS/%s.OPT", basename);
 	if (AeronVfs_ReadAll(vfs, AERON_VFS_ROOT_ASSET, path,
 			(size_t)kRuntimeOptMaxBytes, out_bytes, out_size)) {

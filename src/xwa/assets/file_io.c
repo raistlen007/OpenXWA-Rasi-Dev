@@ -94,6 +94,43 @@ static int File_SplitWildcard(const char* wildcard, char* directory, size_t dire
 	return **pattern != '\0';
 }
 
+/* Test-branch asset overlay. Only explicitly named read-only test resources
+ * bypass the original game-data directory; mission coordinates still travel
+ * through the normal frontend and flight-group spawning code. */
+static int File_ModelLimitsResourcePath(AeronVfsRoot root, const char* fileName, AeronVfsOpenMode mode,
+										char out[512]) {
+	char normalized[256];
+	size_t i = 0;
+	if (root != AERON_VFS_ROOT_ASSET || mode != AERON_VFS_READ)
+		return 0;
+	for (; fileName[i] && i + 1 < sizeof normalized; ++i) {
+		unsigned char c = (unsigned char)fileName[i];
+		if (c == '\\')
+			c = '/';
+		if (c >= 'A' && c <= 'Z')
+			c = (unsigned char)(c - 'A' + 'a');
+		normalized[i] = (char)c;
+	}
+	normalized[i] = '\0';
+	if (fileName[i] != '\0')
+		return 0;
+	if (strcmp(normalized, "combat/mission.lst") == 0) {
+		snprintf(out, 512, "model-limits/combat/mission.lst");
+		return 1;
+	}
+	if (strncmp(normalized, "combat/ztest_", 13) == 0 &&
+		strchr(normalized + 13, '/') == NULL &&
+		i >= 17 && strcmp(normalized + i - 4, ".tie") == 0) {
+		snprintf(out, 512, "model-limits/%s", normalized);
+		return 1;
+	}
+	if (strcmp(normalized, "flightmodels/calamaricruisernew.opt") == 0) {
+		snprintf(out, 512, "model-limits/flightmodels/calamaricruisernew.opt");
+		return 1;
+	}
+	return 0;
+}
+
 void File_SetVfs(AeronVfs* vfs) { g_fileVfs = vfs; }
 
 // FUNCTION: XWA 0x52AD30
@@ -119,6 +156,15 @@ XwaFile* File_Open(const char* fileName, const char* mode) {
 	strncpy(FileName, fileName, sizeof(FileName) - 1);
 	FileName[sizeof(FileName) - 1] = '\0';
 
+	char modelLimitsResource[512];
+	if (File_ModelLimitsResourcePath(root, fileName, openMode, modelLimitsResource)) {
+		if (AeronVfs_Open(g_fileVfs, AERON_VFS_ROOT_RESOURCE, modelLimitsResource, openMode, &file)) {
+			++g_openFileCount;
+			return file;
+		}
+		Aeron_LogError("xwa.assets", "Model-limit resource missing: %s", modelLimitsResource);
+		return NULL;
+	}
 	if (AeronVfs_Open(g_fileVfs, root, fileName, openMode, &file)) {
 		++g_openFileCount;
 		return file;

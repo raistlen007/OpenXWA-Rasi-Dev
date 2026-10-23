@@ -29,6 +29,7 @@
 #include "xwa/flight/flight_debug.h"
 #include "xwa_runtime/snapshot/snapshot.h"
 
+#include <cmath>
 #include <cstdio>
 #include <imgui.h>
 
@@ -1013,6 +1014,71 @@ static void xwa_tool_flight_input(int* open, void* user) {
 	*open = b ? 1 : 0;
 }
 
+/* The model-limit tests measure real mission-space spawning, not render offsets.
+ * Observe the authoritative snapshot without changing simulation state. */
+static void xwa_tool_model_limits(int* open, void* user) {
+	(void)user;
+	ImGui::SetNextWindowSize(ImVec2(520, 300), ImGuiCond_FirstUseEver);
+	bool b = *open != 0;
+	if (!ImGui::Begin("Model Limits", &b)) {
+		ImGui::End();
+		*open = b ? 1 : 0;
+		return;
+	}
+	const XwaSnapshot* snap = XwaSnapshot_Current();
+	if (!snap || !snap->flight_camera_valid) {
+		ImGui::TextDisabled("Enter a ZTest mission to inspect its real spawn positions.");
+	} else {
+		const XwaFlightCamera* cam = &snap->flight_camera;
+		const XwaFlightObject* player = nullptr;
+		const XwaFlightObject* cruiser = nullptr;
+		for (uint32_t i = 0; i < snap->flight_object_count; ++i) {
+			const XwaFlightObject* object = &snap->flight_objects[i];
+			if ((int32_t)object->slot == cam->player_obj_idx)
+				player = object;
+			if (object->fg_idx == 1 && object->genus == XWA_SNAP_GENUS_STARSHIP)
+				cruiser = object;
+		}
+		ImGui::Text("Camera position: %d, %d, %d (engine units)", cam->world_pos[0],
+					cam->world_pos[1], cam->world_pos[2]);
+		ImGui::Text("Camera region: %u", (unsigned)cam->region);
+		if (player) {
+			ImGui::Text("Player position: %d, %d, %d", player->world_pos[0],
+						player->world_pos[1], player->world_pos[2]);
+		} else {
+			ImGui::TextDisabled("Player object not found in this snapshot.");
+		}
+		ImGui::Separator();
+		if (cruiser) {
+			const char* name = XwaSnapshotExport_ModelName(cruiser->object_type);
+			ImGui::Text("Cruiser slot: %u  model type: %u", (unsigned)cruiser->slot,
+						(unsigned)cruiser->object_type);
+			ImGui::Text("Model name: %s", name ? name : "(unresolved)");
+			ImGui::Text("Cruiser position: %d, %d, %d", cruiser->world_pos[0],
+						cruiser->world_pos[1], cruiser->world_pos[2]);
+			if (player) {
+				const double dx = (double)cruiser->world_pos[0] - player->world_pos[0];
+				const double dy = (double)cruiser->world_pos[1] - player->world_pos[1];
+				const double dz = (double)cruiser->world_pos[2] - player->world_pos[2];
+				/* The subtraction and squared distance stay in double to avoid
+				 * overflow at opposite signed mission-coordinate extremes. */
+				const double km = std::sqrt(dx * dx + dy * dy + dz * dz) * (1600.0 / 65536.0 / 1000.0);
+				ImGui::Text("Actual player-to-cruiser centre: %.3f km", km);
+			}
+			const bool eligible = cruiser->render_region == cam->region &&
+								  cruiser->slot_class != XWA_SNAP_SLOT_OTHER;
+			ImGui::Text("Object in render region: %s (region %u)", eligible ? "yes" : "no",
+						(unsigned)cruiser->render_region);
+			ImGui::Text("HD mesh loaded: %s", name && XwaRemasterShip_MeshForName(name) ? "yes" : "no");
+			ImGui::TextDisabled("A loaded mesh does not guarantee visible pixels.");
+		} else {
+			ImGui::TextDisabled("No starship in flight group 1. Check mission spawn/model loading.");
+		}
+	}
+	ImGui::End();
+	*open = b ? 1 : 0;
+}
+
 extern "C" void XwaRemasterDebugTools_Register(void) {
 	if (!Aeron_DebugUiAvailable()) {
 		return;
@@ -1028,4 +1094,5 @@ extern "C" void XwaRemasterDebugTools_Register(void) {
 	Aeron_DebugRegisterTool("HDR & Display", xwa_tool_hdr, nullptr);
 	Aeron_DebugRegisterTool("HUD Snapshot", xwa_tool_hud_snapshot, nullptr);
 	Aeron_DebugRegisterTool("Flight Input", xwa_tool_flight_input, nullptr);
+	Aeron_DebugRegisterTool("Model Limits", xwa_tool_model_limits, nullptr);
 }
