@@ -528,9 +528,9 @@ static void XwaFlightTask_ResetPlayersForMissionRestart(int playerCount) {
 	memset(g_inputFrameCount, 0, sizeof(g_inputFrameCount));
 }
 
-static void XwaFlightTask_ResetLocalLightPulses(void) {
-	for (int pulseIdx = 0; pulseIdx < 6; ++pulseIdx) {
-		g_localPlayerLightPulses[pulseIdx].enabled = 0;
+static void XwaFlightTask_ResetCockpitLights(void) {
+	for (int lightIdx = 0; lightIdx < COCKPIT_LIGHT_COUNT; ++lightIdx) {
+		g_cockpitLights[lightIdx].enabled = 0;
 	}
 }
 
@@ -1394,7 +1394,9 @@ int XwaFlightTask_Init(char* missionCmdLine, const char* filmFilePath) {
 	return 1;
 }
 
-void XwaFlightTask_Tick(void) {
+/* `now`: run the next frame without waiting for its wake time
+   (XwaFlightTask_RunFrameNow). */
+static void XwaFlightTask_TickPhases(int now) {
 	uint64_t nowUs;
 
 	if (!g_xwaFlightTaskActive || g_xwaFlightTaskComplete) {
@@ -1415,18 +1417,20 @@ void XwaFlightTask_Tick(void) {
 		return;
 	}
 
-	if (nowUs < g_xwaFlightTaskNextWakeElapsedUs) {
+	if (!now) {
+		if (nowUs < g_xwaFlightTaskNextWakeElapsedUs) {
+			if (g_xwaFlightTaskTickLogCount < 8u) {
+				++g_xwaFlightTaskTickLogCount;
+				XwaFlightTask_Log("tick-before-wake");
+			}
+			return;
+		}
 		if (g_xwaFlightTaskTickLogCount < 8u) {
 			++g_xwaFlightTaskTickLogCount;
-			XwaFlightTask_Log("tick-before-wake");
+			XwaFlightTask_Log("tick-run");
 		}
-		return;
+		g_xwaFlightTaskNextWakeElapsedUs += XWA_FLIGHT_FRAME_US;
 	}
-	if (g_xwaFlightTaskTickLogCount < 8u) {
-		++g_xwaFlightTaskTickLogCount;
-		XwaFlightTask_Log("tick-run");
-	}
-	g_xwaFlightTaskNextWakeElapsedUs += XWA_FLIGHT_FRAME_US;
 
 	while (!g_xwaFlightTaskComplete) {
 		XwaFlightTask_LogPhaseEntry();
@@ -1551,7 +1555,7 @@ void XwaFlightTask_Tick(void) {
 							XwaFlightFonts_WriteWidthTables();
 							Math_SetFpuSinglePrecisionMode();
 						}
-						FlightLight_InitLocalPlayerPulses();
+						FlightLight_InitCockpitLights();
 						Math_SetFpuSinglePrecisionMode();
 						FlightSurface_Lock();
 						Mission_InitFlightRuntimeState();
@@ -1631,7 +1635,7 @@ void XwaFlightTask_Tick(void) {
 					FlightText_DetectStretchBug();
 					RenderScene_End3D();
 				}
-				XwaFlightTask_ResetLocalLightPulses();
+				XwaFlightTask_ResetCockpitLights();
 				Math_SetFpuSinglePrecisionMode();
 				if (g_missionHeader.body.missionType == XWA_MISSION_TYPE_DEATH_STAR) {
 					skipHangarReady = 1;
@@ -1864,7 +1868,7 @@ void XwaFlightTask_Tick(void) {
 					FlightSurface_Lock();
 					Mission_InitFlightRuntimeState();
 					FlightSurface_Unlock();
-					XwaFlightTask_ResetLocalLightPulses();
+					XwaFlightTask_ResetCockpitLights();
 					FlightStarfield_Init();
 					Backdrop_BuildCoordinateBuffers();
 					Hud_FreeHUDResources();
@@ -2019,6 +2023,30 @@ int XwaFlightTask_IsHoldingLoadingScreen(void) {
 }
 
 int XwaFlightTask_GetResult(void) { return g_xwaFlightTaskResult; }
+
+void XwaFlightTask_Tick(void) { XwaFlightTask_TickPhases(0); }
+
+int XwaFlightTask_RunFrameNow(void) {
+	const uint32_t framesBefore = g_xwaFlightTaskFramesRun;
+
+	if (!g_xwaFlightTaskActive || g_xwaFlightTaskComplete || g_xwaFlightTaskPhase != XWA_FLIGHT_TASK_PHASE_FRAME ||
+		g_flightPlayerCount != 1 || g_filmPlaybackMode != 2 || g_flightMissionEndPending ||
+		XwaFlightPauseTask_IsActive() || FlightDisplay_IsFrontendModalActive()) {
+		return 0;
+	}
+	XwaFlightTask_TickPhases(1);
+	return g_xwaFlightTaskFramesRun != framesBefore;
+}
+
+void XwaFlightTask_EndFilmFastForward(void) {
+	g_inputTimestamp = g_filmStepInputTimestamp;
+	g_gameTime = g_filmStepInputTimestamp;
+	g_serverTickTime = g_filmStepInputTimestamp;
+	g_xwaFlightTaskLastStepTargetTimestamp = g_filmStepInputTimestamp;
+	g_filmPlaybackStepCatchupTicks = 0;
+	(void)Time_GetFrameDelta();
+	g_xwaFlightTaskNextWakeElapsedUs = XwaTime_GetElapsedUs() + XWA_FLIGHT_FRAME_US;
+}
 
 uint64_t XwaFlightTask_NextWakeDelayUs(void) {
 	const uint64_t nowUs = XwaTime_GetElapsedUs();
