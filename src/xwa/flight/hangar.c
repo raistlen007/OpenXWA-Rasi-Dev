@@ -46,6 +46,7 @@
 #include "xwa/math/trig2.h"
 #ifdef XWA_MODERN
 #include "xwa_runtime/input/head_tracking.h"
+#include "xwa_runtime/input/flight_controls.h"
 #include "xwa_runtime/models/articulation.h"
 #include "xwa_runtime/models/craft_definitions.h"
 #include "xwa_runtime/models/craft_sounds.h"
@@ -4195,8 +4196,17 @@ void Hangar_HandleInput(void) {
 
 	// --- Read (and film-record/replay) one key ---
 	if (!g_filmPlaybackMode) {
+#ifdef XWA_MODERN
+		/* The keyboard bindings and the controllers. Each action sends the code
+		   of its original key. */
+		{
+			int fromKeyboard;
+			key = XwaFlightControls_ReadKey(&fromKeyboard);
+		}
+#else
 		if (FlightInput_HasKeyReady())
 			key = FlightInput_GetNextKey();
+#endif
 		if (g_filmRecording == 2)
 			Film_WriteBytesBuffered(&key, 2);
 	} else if (g_filmPlaybackMode == 2) {

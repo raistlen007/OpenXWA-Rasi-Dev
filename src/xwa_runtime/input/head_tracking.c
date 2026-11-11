@@ -44,7 +44,7 @@ void XwaHeadTracking_Shutdown(void) {
 }
 
 int XwaHeadTracking_Poll(XwaHeadPose* out) {
-	XwaModernInputOptions options;
+	XwaHeadTrackingOptions options;
 	int polled;
 
 	if (!out) {
@@ -52,20 +52,20 @@ int XwaHeadTracking_Poll(XwaHeadPose* out) {
 	}
 	memset(out, 0, sizeof *out);
 	XwaHeadTracking_ClearPose();
-	XwaModernInputOptions_Get(&options);
-	if (!options.head_tracking.enabled) {
+	XwaModernInputOptions_GetHeadTracking(&options);
+	if (!options.enabled) {
 		/* Disabled means no connection, polling, or leftover pose. */
 		XwaOpenTrackUdp_Shutdown();
 		XwaTrackIR_Shutdown();
 		return 0;
 	}
 	/* Only one source stays connected; the other is released on a switch. */
-	if (options.head_tracking.source == XWA_HEAD_TRACK_SOURCE_OPENTRACK_UDP) {
+	if (options.source == XWA_HEAD_TRACK_SOURCE_OPENTRACK_UDP) {
 		XwaTrackIR_Shutdown();
-		polled = XwaOpenTrackUdp_Poll(out, &options.head_tracking);
+		polled = XwaOpenTrackUdp_Poll(out, &options);
 	} else {
 		XwaOpenTrackUdp_Shutdown();
-		polled = XwaTrackIR_Poll(out, &options.head_tracking);
+		polled = XwaTrackIR_Poll(out, &options);
 	}
 	if (!polled) {
 		return 0;
