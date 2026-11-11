@@ -1955,7 +1955,14 @@ void XwaSnapshot_CaptureFlight(void) {
 	const int hyperspace_camera = c->hyperspace_phase &&
 								  XwaSnapshotCamera_OrdinaryCamera(c->rows, c->world_pos, hyperspace_eye_offset);
 	if (hyperspace_camera) {
-		XwaSnapshotCamera_PositionFraction(c->world_pos, c->world_pos_fraction);
+		/* The kept camera was placed with the head lean, as above. */
+		for (int axis = 0; axis < 3; ++axis) {
+			untracked_pos[axis] = c->world_pos[axis] - (int32_t)lroundf(head_world_offset[axis]);
+		}
+		XwaSnapshotCamera_PositionFraction(untracked_pos, c->world_pos_fraction);
+		for (int axis = 0; axis < 3; ++axis) {
+			c->world_pos_fraction[axis] += head_world_offset[axis] - roundf(head_world_offset[axis]);
+		}
 	}
 	c->region = g_players[g_localPlayer].regionIndex;
 	c->mission_region =

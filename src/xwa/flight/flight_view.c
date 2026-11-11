@@ -1265,9 +1265,10 @@ void FlightView_UpdatePlayerCamera(int playerIdx) {
 			int tracking = 0;
 			/* Track the local user's normal cockpit view (pilot OR gun turret).
 			 * The camera builder applies head look AFTER turret aim/mount rotations,
-			 * keeping gun aiming independent. Skip external/cinematic views. */
+			 * keeping gun aiming independent. Skip external/cinematic views.
+			 * This also runs during hyperspace: the HD renderer keeps this
+			 * cockpit camera through the jump (XwaSnapshotCamera_NoteHyperspaceOverride). */
 			if (playerIdx == g_localPlayer && !g_filmRecording && !g_filmPlaybackMode &&
-				g_players[playerIdx].hyperspacePhase == PLAYER_HYPERSPACE_PHASE_NONE &&
 				g_players[playerIdx].cockpitVisible &&
 				((g_players[playerIdx].currentSeatIdx == 0 && g_players[playerIdx].cockpitLookAvailable) ||
 				 (g_players[playerIdx].currentSeatIdx > 0 && g_players[playerIdx].cockpitToggleAvailable)) &&
@@ -1379,11 +1380,17 @@ void FlightView_UpdatePlayerCamera(int playerIdx) {
 	 * Apply 6DOF only after these modes have settled their base camera.
 	 * Never write the headset pose into the ship's control/aim state. */
 	if (playerIdx == g_localPlayer && !g_players[playerIdx].mapCameraState && !g_filmRecording &&
-		!g_filmPlaybackMode &&
-		(g_players[playerIdx].hyperspacePhase != PLAYER_HYPERSPACE_PHASE_NONE ||
-		 (g_players[playerIdx].viewState.externalCameraActive &&
-		  !g_players[playerIdx].viewState.playerInputBlocked))) {
-		FlightView_ApplyHeadTrackingToCurrentCamera(playerIdx);
+		!g_filmPlaybackMode) {
+		if (g_players[playerIdx].hyperspacePhase != PLAYER_HYPERSPACE_PHASE_NONE) {
+			/* The cockpit camera above already leaned the position, which the
+			 * hyperspace camera kept; only turn the classic view here. */
+			XwaHeadPose head;
+			if (XwaHeadTracking_Poll(&head))
+				FVIEW_ApplyHeadLookToCamera(&head);
+		} else if (g_players[playerIdx].viewState.externalCameraActive &&
+				   !g_players[playerIdx].viewState.playerInputBlocked) {
+			FlightView_ApplyHeadTrackingToCurrentCamera(playerIdx);
+		}
 	}
 #endif
 }
