@@ -24,10 +24,12 @@ static int XwaWinmmJoystick_Source(AeronWinmmJoystickState* out, void* user) {
 	out->axes[1] = state.axes[XWA_CONTROLLER_AXIS_PITCH];
 	out->axes[2] = state.axes[XWA_CONTROLLER_AXIS_THROTTLE];
 	out->axes[3] = state.axes[XWA_CONTROLLER_AXIS_ROLL];
-	out->buttons = state.buttons;
+	/* Modern button actions are dispatched directly for all 64 slots per
+	 * controller; exposing them again through WinMM would double-fire. */
+	out->buttons = 0;
 	out->button_count = XWA_CONTROLLER_LOGICAL_BUTTON_COUNT;
-	out->pov_direction = state.pov_direction;
-	out->has_pov = state.has_pov;
+	out->pov_direction = -1;
+	out->has_pov = 0;
 	out->name = controller->name;
 
 	memset(&trace, 0, sizeof(trace));

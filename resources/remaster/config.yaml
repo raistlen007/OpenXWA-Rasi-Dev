@@ -6,6 +6,19 @@ input:
   mouse_mode: 'position'
   mouse_sensitivity: 5
   mouse_invert_y: true
+  # Native TrackIR is Windows-only; OpenTrack UDP works on all platforms.
+  # Configure OpenTrack output to UDP over network -> 127.0.0.1:4242.
+  # Inversion is relative to OpenXWA's standard head-motion directions.
+  head_tracking:
+    enabled: false
+    source: 'trackir'
+    invert:
+      yaw: false
+      pitch: false
+      roll: false
+      x: false
+      y: false
+      z: false
   controller:
     device:
       # Empty GUID selects the first connected controller.
@@ -21,6 +34,7 @@ input:
         pitch: { source: 'lefty', invert: true, deadzone: 0.08 }
         throttle: { source: 'righttrigger', invert: false, deadzone: 0.0 }
         roll: { source: 'rightx', invert: false, deadzone: 0.08 }
+        hyperdrive: { source: 'none', invert: false, deadzone: 0.0 }
       buttons:
         '1': 'south'
         '2': 'east'
@@ -67,6 +81,7 @@ input:
         pitch: { source: 1, invert: true, deadzone: 0.08 }
         throttle: { source: 2, invert: false, deadzone: 0.08 }
         roll: { source: 3, invert: false, deadzone: 0.08 }
+        hyperdrive: { source: 'none', invert: false, deadzone: 0.0 }
       buttons:
         '1': 0
         '2': 1

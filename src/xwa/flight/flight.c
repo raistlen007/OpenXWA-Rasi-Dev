@@ -60,6 +60,9 @@
 #include "xwa_runtime/models/craft_hyperspace.h"
 #include "xwa_runtime/models/model_roles.h"
 #ifdef XWA_MODERN
+#include "xwa_runtime/input/controller_mapping.h"
+#endif
+#ifdef XWA_MODERN
 #include "xwa_runtime/input/mouse_flight.h"
 #include "xwa_runtime/models/articulation.h"
 #include "xwa_runtime/models/craft_sounds.h"
@@ -2643,6 +2646,32 @@ uint16_t FlightInput_Read(int playerIdxOrSentinel) {
 			}
 			g_controlMask = filteredMask;
 			keyMods = keyModAlt2 + 2 * keyModAlt3;
+#ifdef XWA_MODERN
+			/* Two independent physical devices, including their expanded button
+			 * bindings, feed the same source-agnostic flight key stream. */
+			XwaControllerMapping_ReadActions(&key, &keyMods);
+
+			/* The lever is a Space alternative exclusively for hyperspace
+			 * confirmation action 10; action 2 enters a hangar and must not
+			 * respond. Consume early strokes so they cannot trigger later. */
+			{
+				const int lever_pushed = XwaControllerMapping_ConsumeHyperdriveEngage();
+				if (lever_pushed && g_joystickEnabled && key == 0 && !g_filmPlaybackMode &&
+					!g_inHangarReady && g_localPlayer >= 0 && g_localPlayer < 8 &&
+					g_players[g_localPlayer].pendingActionId == 10 &&
+					g_players[g_localPlayer].msgTypeId == 0 &&
+					!g_players[g_localPlayer].mapCameraState &&
+					!g_players[g_localPlayer].hasCheckpointFlag &&
+					g_players[g_localPlayer].hyperspacePhase == PLAYER_HYPERSPACE_PHASE_NONE &&
+					(uint16_t)g_players[g_localPlayer].objectIndex != 0xffffu) {
+					const MobileObject* ship =
+						g_objectTable[(uint16_t)g_players[g_localPlayer].objectIndex].mobj;
+					if (ship && ship->pCraft && (ship->pCraft->systemFlags & 0x80u)) {
+						key = KEY_SPACE;
+					}
+				}
+			}
+#endif
 		}
 
 		if (key == 0) {

@@ -15,9 +15,9 @@ extern "C" {
 enum {
 	XWA_MODERN_MOUSE_SENSITIVITY_MIN = 1,
 	XWA_MODERN_MOUSE_SENSITIVITY_MAX = 9,
-	XWA_CONTROLLER_LOGICAL_AXIS_COUNT = 4,
-	XWA_CONTROLLER_LOGICAL_BUTTON_COUNT = 16,
-	XWA_CONTROLLER_ACTION_COUNT = 20,
+	XWA_CONTROLLER_LOGICAL_AXIS_COUNT = 5,
+	XWA_CONTROLLER_LOGICAL_BUTTON_COUNT = 64,
+	XWA_CONTROLLER_ACTION_COUNT = XWA_CONTROLLER_LOGICAL_BUTTON_COUNT + 4,
 	XWA_CONTROLLER_RUMBLE_STRENGTH_MIN = 0,
 	XWA_CONTROLLER_RUMBLE_STRENGTH_MAX = 8,
 	XWA_CONTROLLER_DEVICE_ORDINAL_MAX = 15,
@@ -36,6 +36,7 @@ typedef enum XwaControllerLogicalAxis {
 	XWA_CONTROLLER_AXIS_PITCH,
 	XWA_CONTROLLER_AXIS_THROTTLE,
 	XWA_CONTROLLER_AXIS_ROLL,
+	XWA_CONTROLLER_AXIS_HYPERDRIVE,
 } XwaControllerLogicalAxis;
 
 typedef struct XwaControllerAxisBinding {
@@ -59,6 +60,8 @@ typedef struct XwaControllerProfile {
 } XwaControllerProfile;
 
 typedef struct XwaControllerOptions {
+	/* An empty device GUID means Automatic only while enabled. */
+	int enabled;
 	AeronControllerSelector device;
 	int roll_enabled;
 	int rumble_enabled;
@@ -66,6 +69,26 @@ typedef struct XwaControllerOptions {
 	XwaControllerProfile gamepad;
 	XwaControllerProfile joystick;
 } XwaControllerOptions;
+
+enum {
+	XWA_HEAD_TRACK_SOURCE_TRACKIR = 0,
+	XWA_HEAD_TRACK_SOURCE_OPENTRACK_UDP = 1,
+	XWA_HEAD_TRACK_AXIS_YAW = 0,
+	XWA_HEAD_TRACK_AXIS_PITCH,
+	XWA_HEAD_TRACK_AXIS_ROLL,
+	XWA_HEAD_TRACK_AXIS_X,
+	XWA_HEAD_TRACK_AXIS_Y,
+	XWA_HEAD_TRACK_AXIS_Z,
+	XWA_HEAD_TRACK_AXIS_COUNT
+};
+
+typedef struct XwaHeadTrackingOptions {
+	int enabled;
+	/* Enumeration deliberately kept separate from the source ABIs,
+	 * so future head-tracking providers can share the same menu. */
+	int source;
+	int invert[XWA_HEAD_TRACK_AXIS_COUNT];
+} XwaHeadTrackingOptions;
 
 typedef struct XwaModernInputOptions {
 	int mouse_flight_enabled;
@@ -76,6 +99,8 @@ typedef struct XwaModernInputOptions {
 	int mouse_sensitivity;
 	int mouse_invert_y;
 	XwaControllerOptions controller;
+	XwaControllerOptions controller2;
+	XwaHeadTrackingOptions head_tracking;
 } XwaModernInputOptions;
 
 typedef void (*XwaModernInputOptionsApplyFn)(const XwaModernInputOptions* options);
@@ -90,6 +115,7 @@ void XwaModernInputOptions_Get(XwaModernInputOptions* out);
 void XwaModernInputOptions_GetDefaults(XwaModernInputOptions* out);
 int XwaModernInputOptions_Set(const XwaModernInputOptions* options);
 int XwaModernInputOptions_RestoreControllerDefaults(void);
+int XwaModernInputOptions_RestoreControllerSlotDefaults(int slot);
 int XwaModernInputOptions_Flush(void);
 int XwaModernInputOptions_IsDirty(void);
 

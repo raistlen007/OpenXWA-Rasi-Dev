@@ -39,6 +39,7 @@
 
 #ifdef XWA_MODERN
 #include "xwa_runtime/config/modern_controller_options_screen.h"
+#include "xwa_runtime/config/modern_head_tracking_screen.h"
 #include "xwa_runtime/config/modern_input_options.h"
 #include "xwa_runtime/config/modern_input_options_screen.h"
 #include "xwa_runtime/config/modern_mods.h"
@@ -952,7 +953,17 @@ int Config_ControllerOptionsScreen(void) {
 			g_menuCursorRow = 4;
 			break;
 		case 2:
+			XwaModernControllerOptionsScreen_SelectSlot(0);
 			g_pendingMenuScreen = 20;
+			g_menuCursorRow = 0;
+			break;
+		case 4:
+			XwaModernControllerOptionsScreen_SelectSlot(1);
+			g_pendingMenuScreen = 20;
+			g_menuCursorRow = 0;
+			break;
+		case 3:
+			g_pendingMenuScreen = 24;
 			g_menuCursorRow = 0;
 			break;
 		default:
@@ -2622,6 +2633,13 @@ int Config_OptionsDatapadUpdate(int frameState) {
 			if (XwaModernModsScreen_Update(g_configMenuCenterX, &g_menuCursorRow)) {
 				g_pendingMenuScreen = 0;
 				g_menuCursorRow = 9;
+			}
+			done = 0;
+			break;
+		case 24:
+			if (XwaModernHeadTrackingScreen_Update(g_configMenuCenterX, &g_menuCursorRow)) {
+				g_pendingMenuScreen = 4;
+				g_menuCursorRow = 5;
 			}
 			done = 0;
 			break;
@@ -5364,12 +5382,14 @@ void Config_ApplyModernInputOptions(const XwaModernInputOptions* options) {
 									   strcmp(previousDevice.guid, options->controller.device.guid) != 0 ||
 									   strcmp(previousDevice.path, options->controller.device.path) != 0 ||
 									   previousDevice.ordinal != options->controller.device.ordinal);
-	g_gameConfig.rudderEnabled = (uint8_t)options->controller.roll_enabled;
+	g_gameConfig.rudderEnabled = (uint8_t)((options->controller.enabled && options->controller.roll_enabled) ||
+										 (options->controller2.enabled && options->controller2.roll_enabled));
 	/* The axes are inverted where the Aeron input becomes WinMM joystick
 	   values, so the game's own flip settings stay off. */
 	g_gameConfig.flipRudder = 0;
 	g_gameConfig.flipY = 0;
-	g_gameConfig.ffEnabled = (uint8_t)options->controller.rumble_enabled;
+	g_gameConfig.ffEnabled = (uint8_t)((options->controller.enabled && options->controller.rumble_enabled) ||
+								(options->controller2.enabled && options->controller2.rumble_enabled));
 	g_gameConfig.ffStrength = (uint8_t)options->controller.rumble_strength;
 	g_gameConfig.ffCenter = 0;
 	XwaControllerMapping_CopySelectedActions(g_gameConfig.joyButtons);
