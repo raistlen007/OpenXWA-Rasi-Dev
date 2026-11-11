@@ -13,7 +13,7 @@
 
 int XwaModernVideoOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	/* The rows under the title, Back included. */
-	enum { row_count = 15 };
+	enum { row_count = 16 };
 	static const char* const window_mode_texts[] = { "Windowed", "Fullscreen" };
 	static const char* const quality_texts[] = { "Off", "Low", "High" };
 	static const char* const shadow_quality_texts[] = { "Standard", "High" };
@@ -53,6 +53,7 @@ int XwaModernVideoOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	uint8_t paper_white;
 	uint8_t hud_scale;
 	uint8_t original_hud_scale;
+	uint8_t smooth_menu_fonts;
 	uint8_t enhanced_camera;
 	uint8_t camera_shake;
 	uint8_t target_readout;
@@ -85,6 +86,7 @@ int XwaModernVideoOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 			hud_scale = i;
 	}
 	original_hud_scale = hud_scale;
+	smooth_menu_fonts = (uint8_t)options.smooth_menu_fonts;
 	XwaModernCameraOptions_Get(&camera_options);
 	enhanced_camera = (uint8_t)(camera_options.enabled != 0);
 	XwaModernCameraShakeOptions_Get(&camera_shake_options);
@@ -103,6 +105,8 @@ int XwaModernVideoOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 												shadow_quality_texts, 2, 62, 0);
 	changed |= XwaModernOptionsMenu_DrawCycleU8(&menu, &fsr, "FSR Upscaling", fsr_texts, 5, 63, 0);
 	changed |= XwaModernOptionsMenu_DrawCycleU8(&menu, &msaa, "MSAA", msaa_texts, 4, 64, 0);
+	changed |= XwaModernOptionsMenu_DrawCycleU8(&menu, &smooth_menu_fonts, "Smooth Menu Fonts", toggle_texts,
+												2, 72, 0);
 	changed |= XwaModernOptionsMenu_DrawCycleU8(&menu, &motion_blur_quality, "Motion Blur", motion_blur_texts,
 												3, 65, 0);
 	motion_blur_amount_changed =
@@ -154,6 +158,7 @@ int XwaModernVideoOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 		if (hud_scale != original_hud_scale) {
 			options.hud_scale = hud_scale_values[hud_scale];
 		}
+		options.smooth_menu_fonts = smooth_menu_fonts;
 		XwaModernVideoOptions_Set(&options);
 	}
 	/* The exterior camera lag and tilt, the cockpit sway and the exterior HUD.
