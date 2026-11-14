@@ -33,9 +33,22 @@ typedef struct XwaModEntry {
 	/* The mod folder. Empty for the original game. */
 	char path[XWA_INSTALL_PATH_CAPACITY];
 	XwaModState state;
-	/* Why the mod can't be used, for the player. Empty when it can. */
+	/* Why the mod can't be used, for the player. Empty when it can. It only
+	   gives the cause: XwaModList_Advice says what to do. */
 	char problem[160];
+	int imported; /* the importer made it */
+	int version;  /* the mod format version of its mod.yaml, or 0 */
 } XwaModEntry;
+
+/* Where the player reads the advice of XwaModList_Advice. */
+typedef enum XwaModAdvicePlace {
+	XWA_MOD_ADVICE_STARTUP, /* the message at startup */
+	XWA_MOD_ADVICE_MODS_TAB /* the Mods tab of the options window */
+} XwaModAdvicePlace;
+
+/* What the player can do about the problem of `mod`, or NULL when there is
+ * nothing to say. */
+const char* XwaModList_Advice(const XwaModEntry* mod, XwaModAdvicePlace place);
 
 /* Reads the mod.yaml of folder `path` into `out`. Returns 0 when the folder
  * has none. A mod.yaml with an error gives XWA_MOD_UNREADABLE. */

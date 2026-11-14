@@ -246,13 +246,12 @@ RUN case "${XWA_BUILD_TYPE}" in \
         -DXWA_BUILD_TOOLS=ON \
         -DXWA_ENABLE_DEBUG_UI="${xwa_debug_ui}" \
         -DXWA_VERSION="${XWA_VERSION}" \
-    && cmake --build /build/xwa --target xwa xwa_mod_importer --parallel
+    && cmake --build /build/xwa --target xwa --parallel
 
 RUN mkdir -p /build/package/openxwa-linux-x86_64/licenses \
         /build/package/openxwa-linux-x86_64/lib \
         /build/package/openxwa-linux-x86_64/shaders \
-    && cp /build/xwa/OpenXWA "/build/xwa/OpenXWA Mod Importer" \
-        /build/package/openxwa-linux-x86_64/ \
+    && cp /build/xwa/OpenXWA /build/package/openxwa-linux-x86_64/ \
     && cp /build/xwa/shaders/*.spv \
         /build/package/openxwa-linux-x86_64/shaders/ \
     && cp -a /build/xwa/resources /build/package/openxwa-linux-x86_64/ \
@@ -284,7 +283,6 @@ RUN mkdir -p /build/package/openxwa-linux-x86_64/licenses \
         /build/package/openxwa-linux-x86_64/lib/ \
     && patchelf --set-rpath '$ORIGIN/lib' \
         /build/package/openxwa-linux-x86_64/OpenXWA \
-        "/build/package/openxwa-linux-x86_64/OpenXWA Mod Importer" \
     && for library in /build/package/openxwa-linux-x86_64/lib/*.so*; do \
         patchelf --set-rpath '$ORIGIN' "$library"; \
     done \
@@ -293,7 +291,7 @@ RUN mkdir -p /build/package/openxwa-linux-x86_64/licenses \
     && if [ "${XWA_BUILD_TYPE}" = Release ]; then \
         mkdir -p /build/symbols \
         && cd /build/package/openxwa-linux-x86_64 \
-        && for program in OpenXWA "OpenXWA Mod Importer"; do \
+        && for program in OpenXWA; do \
             objcopy --only-keep-debug "$program" "/build/symbols/${program}.debug" \
             && cp "/build/symbols/${program}.debug" . \
             && objcopy --strip-debug --add-gnu-debuglink="${program}.debug" "$program" \
@@ -311,7 +309,7 @@ RUN test -f /build/package/openxwa-linux-x86_64/shaders/hyperspace_streak.vert.s
     && test -f /build/package/openxwa-linux-x86_64/resources/remaster/config.yaml \
     && test -f /build/package/openxwa-linux-x86_64/resources/assets/fonts/menu.fnt \
     && test -f /build/package/openxwa-linux-x86_64/resources/assets/fonts/menu.ktx2 \
-    && for program in OpenXWA "OpenXWA Mod Importer"; do \
+    && for program in OpenXWA; do \
         file "/build/package/openxwa-linux-x86_64/${program}" \
         && env -u LD_LIBRARY_PATH ldd "/build/package/openxwa-linux-x86_64/${program}" \
         && ! env -u LD_LIBRARY_PATH \
@@ -330,7 +328,6 @@ RUN test -f /build/package/openxwa-linux-x86_64/shaders/hyperspace_streak.vert.s
     # versions, or the glibc-2.36-only DT_RELR ABI, so a toolchain or
     # dependency bump cannot silently raise the floor.
     && for object in /build/package/openxwa-linux-x86_64/OpenXWA \
-        "/build/package/openxwa-linux-x86_64/OpenXWA Mod Importer" \
         /build/package/openxwa-linux-x86_64/lib/*.so*; do \
         if readelf -V "$object" | grep -q 'GLIBC_ABI_'; then \
             echo "$object requires a GLIBC_ABI_* version (DT_RELR needs glibc 2.36+)" >&2; \
@@ -346,14 +343,14 @@ RUN test -f /build/package/openxwa-linux-x86_64/shaders/hyperspace_streak.vert.s
             fi; \
         done; \
     done \
-    && for program in OpenXWA "OpenXWA Mod Importer"; do \
+    && for program in OpenXWA; do \
         readelf -n "/build/package/openxwa-linux-x86_64/${program}" | grep -q 'Build ID' || exit 1; \
     done \
     && if [ "${XWA_BUILD_TYPE}" = Debug ]; then \
         readelf --sections /build/package/openxwa-linux-x86_64/OpenXWA \
             | grep -q '\.debug_info'; \
     else \
-        for program in OpenXWA "OpenXWA Mod Importer"; do \
+        for program in OpenXWA; do \
             ! readelf --sections "/build/package/openxwa-linux-x86_64/${program}" \
                 | grep -q '\.debug_info' \
             && readelf --sections "/build/symbols/${program}.debug" | grep -q '\.debug_info' \

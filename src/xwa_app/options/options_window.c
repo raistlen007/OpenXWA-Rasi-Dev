@@ -2,6 +2,7 @@
 
 #include "options/controller_page.h"
 #include "options/keyboard_page.h"
+#include "options/mods_page.h"
 #include "options/mouse_page.h"
 #include "options/video_page.h"
 #include "xwa_runtime/config/modern_input_options.h"
@@ -20,6 +21,7 @@ enum {
 	OPTIONS_PAGE_CONTROLLER,
 	OPTIONS_PAGE_KEYBOARD,
 	OPTIONS_PAGE_MOUSE,
+	OPTIONS_PAGE_MODS,
 	OPTIONS_PAGE_COUNT
 };
 
@@ -44,6 +46,12 @@ static void XwaOptionsWindow_DrawKeyboard(AeronUiContext* ui, const AeronInputSn
 	XwaKeyboardSettings_Draw(&g_window.keyboard, ui);
 }
 
+static void XwaOptionsWindow_DrawMods(AeronUiContext* ui, const AeronInputSnapshot* input) {
+	(void)ui;
+	(void)input;
+	XwaModsPage_Draw();
+}
+
 bool XwaOptionsWindow_Init(XwaAppUi* ui, char* error, size_t capacity) {
 	memset(&g_window, 0, sizeof g_window);
 	g_window.ui = XwaAppUi_Context(ui);
@@ -51,6 +59,7 @@ bool XwaOptionsWindow_Init(XwaAppUi* ui, char* error, size_t capacity) {
 	g_window.pages[OPTIONS_PAGE_CONTROLLER] = XwaOptionsWindow_DrawController;
 	g_window.pages[OPTIONS_PAGE_KEYBOARD] = XwaOptionsWindow_DrawKeyboard;
 	g_window.pages[OPTIONS_PAGE_MOUSE] = XwaMousePage_Draw;
+	g_window.pages[OPTIONS_PAGE_MODS] = XwaOptionsWindow_DrawMods;
 	g_window.ready = g_window.ui != NULL;
 	if (!g_window.ready && error && capacity)
 		snprintf(error, capacity, "the options window has no UI context");
@@ -75,8 +84,11 @@ float XwaOptionsWindow_ScrollHeight(void) {
 	/* Leaves room below the scroll area for the tab's bottom edge, the
 	   separator, the Close button and the gaps between them. */
 	float footer = 4.0f + 9.0f + theme->row_height + 3.0f * theme->item_spacing;
+	const char* busy = XwaModsPage_BusyMessage();
 	if (g_window.error[0])
 		footer += AeronUi_MeasureHelpHeight(g_window.ui, g_window.error, 0.0f) + theme->item_spacing;
+	if (busy)
+		footer += AeronUi_MeasureHelpHeight(g_window.ui, busy, 0.0f) + theme->item_spacing;
 	float height = AeronUi_AvailableHeight(g_window.ui) - footer;
 	return height > 0.0f ? height : 1.0f;
 }
@@ -96,6 +108,7 @@ void XwaOptionsWindow_FlushForExit(void) {
 }
 
 void XwaOptionsWindow_Shutdown(void) {
+	XwaModsPage_Shutdown();
 	XwaKeyboardSettings_CancelCapture(&g_window.keyboard, g_window.ui);
 	if (g_window.ui)
 		AeronUi_CancelControllerCapture(g_window.ui);
@@ -123,11 +136,14 @@ void XwaOptionsWindow_Show(void) {
 		XwaInput_SetCaptured(true);
 		XwaPort_SetOptionsWindowOpen(1);
 		Aeron_SetHostCursorVisible(1);
+		if (g_window.page == OPTIONS_PAGE_MODS)
+			XwaModsPage_Open();
 	}
 }
 
+/* The window stays open while the Mods tab imports or deletes a mod. */
 void XwaOptionsWindow_RequestClose(void) {
-	if (g_window.open)
+	if (g_window.open && !XwaModsPage_Busy())
 		g_window.close_requested = true;
 }
 
@@ -188,11 +204,24 @@ void XwaOptionsWindow_Frame(const AeronInputSnapshot* input, float seconds) {
 			XwaOptionsWindow_DrawNotice(input, seconds);
 		return;
 	}
-	static const char* pages[] = { "Video", "Controller", "Keyboard", "Mouse" };
+	static const char* pages[] = { "Video", "Controller", "Keyboard", "Mouse", "Mods" };
+	/* AeronUi scales by the window's height / 1080, so the width it has in
+	   reference pixels depends on the window's shape: 1920 at 16:9, 1440 at
+	   4:3. */
+	float width = 1200.0f;
+	if (input->window_width > 0 && input->window_height > 0) {
+		const float available = 1080.0f * (float)input->window_width / (float)input->window_height - 80.0f;
+		if (available < width)
+			width = available;
+	}
+	XwaModsPage_Update();
 	AeronUi_BeginFrame(g_window.ui, &(AeronUiFrameDesc) { .input = input, .dt_seconds = seconds });
 	if (AeronUi_BeginWindow(g_window.ui, "OpenXWA Options",
-							&(AeronUiWindowDesc) { .width_ref = 980, .height_ref = 1000, .centered = 1 })) {
+							&(AeronUiWindowDesc) { .width_ref = width, .height_ref = 1000, .centered = 1 })) {
+		const int previous_page = g_window.page;
 		AeronUi_BeginTabBar(g_window.ui, "pages", pages, OPTIONS_PAGE_COUNT, &g_window.page);
+		if (g_window.page != previous_page && g_window.page == OPTIONS_PAGE_MODS)
+			XwaModsPage_Open();
 		if (g_window.page != OPTIONS_PAGE_CONTROLLER) {
 			XwaControllerSettings_CancelCapture(&g_window.controller, g_window.ui);
 			g_window.controller.editor.binding_modal_open = 0;
@@ -205,13 +234,18 @@ void XwaOptionsWindow_Frame(const AeronInputSnapshot* input, float seconds) {
 		AeronUi_EndTabBar(g_window.ui);
 		if (g_window.error[0])
 			AeronUi_Error(g_window.ui, g_window.error);
+		const char* busy = XwaModsPage_BusyMessage();
+		if (busy)
+			AeronUi_Help(g_window.ui, busy);
 		AeronUi_Separator(g_window.ui);
-		if (AeronUi_Button(g_window.ui, "Close"))
+		if (AeronUi_ButtonEnabled(g_window.ui, "Close", busy == NULL))
 			XwaOptionsWindow_RequestClose();
 		if (g_window.page == OPTIONS_PAGE_CONTROLLER)
 			XwaControllerSettings_DrawModals(&g_window.controller, g_window.ui, input);
 		if (g_window.page == OPTIONS_PAGE_KEYBOARD)
 			XwaKeyboardSettings_DrawModals(&g_window.keyboard, g_window.ui);
+		/* Whatever the tab, as quitting can open one. */
+		XwaModsPage_DrawModals();
 		AeronUi_EndWindow(g_window.ui);
 	}
 	AeronUiOutput output = AeronUi_EndFrame(g_window.ui);
@@ -232,7 +266,11 @@ bool XwaOptionsWindow_BeginFrame(const AeronInputSnapshot* input) {
 		g_window.close_requested = true;
 		g_window.close_forced = true;
 	}
-	if (g_window.close_requested) {
+	/* A forced close waits for the Mods tab: an import is cancelled, a delete
+	   ends. */
+	if (g_window.close_requested && g_window.close_forced && XwaModsPage_Busy())
+		XwaModsPage_CancelImport();
+	else if (g_window.close_requested) {
 		char error[1024];
 		if (XwaControllerSettings_Commit(&g_window.controller, error, sizeof error) &&
 			XwaKeyboardSettings_Commit(&g_window.keyboard, error, sizeof error) &&

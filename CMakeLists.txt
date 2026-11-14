@@ -49,7 +49,7 @@ endif()
 option(XWA_BUILD_TOOLS "Build OpenXWA and Aeron asset/developer tools" ON)
 # The mod importer is built from the tool libraries, so it needs the tools.
 include(CMakeDependentOption)
-cmake_dependent_option(XWA_BUILD_MOD_IMPORTER "Build the OpenXWA Mod Importer" ON "XWA_BUILD_TOOLS" OFF)
+cmake_dependent_option(XWA_BUILD_MOD_IMPORTER "Build the mod importer into OpenXWA" ON "XWA_BUILD_TOOLS" OFF)
 set(AERON_BUILD_TOOLS ${XWA_BUILD_TOOLS})
 set(AERON_ENABLE_VIDEO ON)
 set(AERON_HOST_TOOLS_ONLY OFF)
@@ -215,8 +215,6 @@ set(XWA_RUNTIME_SOURCES
     src/xwa_runtime/config/modern_options_menu.c
     src/xwa_runtime/config/modern_pilot_profiles_screen.c
     src/xwa_runtime/config/modern_video_options.c
-    src/xwa_runtime/config/modern_mods.c
-    src/xwa_runtime/config/modern_mods_screen.c
     src/xwa_runtime/config/modern_speed_effect_options.c
     src/xwa_runtime/config/modern_sun_options.c
     src/xwa_runtime/config/modern_target_readout_options.c
@@ -425,7 +423,7 @@ target_link_libraries(xwa_core
 )
 
 # The paths.* keys of config.yaml, the game data check and the mod list.
-# The game and the mod importer both link it. It doesn't depend on the game.
+# It doesn't depend on the game's code.
 set(XWA_INSTALL_SOURCES
     src/xwa_app/install_check.c
     src/xwa_app/install_paths.c
@@ -445,6 +443,7 @@ set(XWA_APP_SOURCES
     src/xwa_app/options/bindings_editor.c
     src/xwa_app/options/controller_page.c
     src/xwa_app/options/keyboard_page.c
+    src/xwa_app/options/mods_page.c
     src/xwa_app/options/mouse_page.c
     src/xwa_app/options/video_page.c
     src/xwa_app/options/options_window.c
@@ -472,6 +471,8 @@ target_compile_definitions(xwa_core PRIVATE
     OPENXWA_VERSION="${XWA_VERSION}"
 )
 target_compile_definitions(xwa PRIVATE OPENXWA_VERSION="${XWA_VERSION}")
+# 1 when the Mods tab can import mods (src/xwa_app/options/mods_import.c).
+target_compile_definitions(xwa PRIVATE XWA_HAS_MOD_IMPORT=$<BOOL:${XWA_BUILD_MOD_IMPORTER}>)
 
 if(APPLE)
     set(XWA_MACOS_BUILD_VERSION "1" CACHE STRING
@@ -513,8 +514,13 @@ if(APPLE)
         HEADER_FILE_ONLY TRUE
         MACOSX_PACKAGE_LOCATION Resources/resources/aeron)
 
-    # The font of the OpenXWA Options window.
+    # The font of the OpenXWA Options window, and the fonts that the mod
+    # importer gives the mods it makes.
     set(XWA_MACOS_FONT_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/DejaVu-LICENSE.txt"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/DejaVuSans.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/Inconsolata-Bold.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/Inconsolata-OFL.txt"
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/menu.fnt"
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/menu.ktx2")
     target_sources(xwa PRIVATE ${XWA_MACOS_FONT_FILES})
@@ -665,65 +671,9 @@ if(XWA_BUILD_MOD_IMPORTER)
     set_target_properties(xwa_mod_import PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-    # The importer's window. It needs Aeron's shaders and the fonts in
-    # resources/assets/fonts. On macOS it is a second bundle with its own
-    # copy of both. Elsewhere it sits beside OpenXWA, uses the same shaders
-    # folder and has its own copy of the resources.
-    add_executable(xwa_mod_importer
-        tools/mod_importer/app/main.c
-        tools/mod_importer/app/ui.c
-    )
-    target_link_libraries(xwa_mod_importer PRIVATE xwa_mod_import_lib xwa_install)
-    target_compile_definitions(xwa_mod_importer PRIVATE OPENXWA_VERSION="${XWA_VERSION}")
-    set_target_properties(xwa_mod_importer PROPERTIES
-        OUTPUT_NAME "OpenXWA Mod Importer"
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-    if(APPLE)
-        set_target_properties(xwa_mod_importer PROPERTIES
-            MACOSX_BUNDLE TRUE
-            MACOSX_BUNDLE_INFO_PLIST
-                "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in"
-            MACOSX_BUNDLE_BUNDLE_NAME "OpenXWA Mod Importer"
-            MACOSX_BUNDLE_GUI_IDENTIFIER "${XWA_MACOS_BUNDLE_IDENTIFIER}.modimporter"
-            INSTALL_RPATH "@executable_path/../Frameworks"
-        )
-        target_sources(xwa_mod_importer PRIVATE "${XWA_MACOS_ICON}")
-
-        set(XWA_MOD_IMPORTER_FONTS
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/DejaVu-LICENSE.txt"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/DejaVuSans.ttf"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/Inconsolata-Bold.ttf"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/Inconsolata-OFL.txt"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/menu.fnt"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/assets/fonts/menu.ktx2")
-        target_sources(xwa_mod_importer PRIVATE ${XWA_MOD_IMPORTER_FONTS})
-        set_source_files_properties(${XWA_MOD_IMPORTER_FONTS} PROPERTIES
-            HEADER_FILE_ONLY TRUE
-            MACOSX_PACKAGE_LOCATION Resources/resources/assets/fonts)
-
-        # Only Aeron's shaders: the game's own aren't used here. Their
-        # bundle location is set with the game's.
-        target_sources(xwa_mod_importer PRIVATE ${AERON_SHADER_OUTPUTS})
-
-        install(TARGETS xwa_mod_importer BUNDLE DESTINATION .)
-        set(XWA_MACOS_FIXUP_BUNDLE "OpenXWA Mod Importer.app")
-        configure_file(
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/FixupBundle.cmake.in"
-            "${CMAKE_CURRENT_BINARY_DIR}/FixupMacImporterBundle.cmake"
-            @ONLY
-        )
-        install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/FixupMacImporterBundle.cmake")
-    else()
-        if(WIN32)
-            set_target_properties(xwa_mod_importer PROPERTIES WIN32_EXECUTABLE TRUE)
-        endif()
-        add_custom_command(TARGET xwa_mod_importer POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                ${CMAKE_CURRENT_SOURCE_DIR}/resources
-                $<TARGET_FILE_DIR:xwa_mod_importer>/resources
-            COMMENT "Staging the mod importer's resources"
-        )
-    endif()
+    # The Mods tab of OpenXWA's options window, which imports mods.
+    target_sources(xwa PRIVATE src/xwa_app/options/mods_import.c)
+    target_link_libraries(xwa PRIVATE xwa_mod_import_lib)
 endif()
 
 # Replacement-model simulation data must be bit-identical across compilers.
@@ -758,11 +708,9 @@ if(XWA_BUILD_MOD_IMPORTER)
     if(MSVC)
         target_compile_options(xwa_mod_import_lib PRIVATE /W4)
         target_compile_options(xwa_mod_import PRIVATE /W4)
-        target_compile_options(xwa_mod_importer PRIVATE /W4)
     else()
         target_compile_options(xwa_mod_import_lib PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(xwa_mod_import PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(xwa_mod_importer PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()
 
@@ -779,8 +727,6 @@ set(XWA_FORMAT_HEADERS
     src/xwa_runtime/config/modern_target_readout_options.h
     src/xwa_runtime/config/modern_video_options.h
     src/xwa_runtime/config/option_section.h
-    src/xwa_runtime/config/modern_mods.h
-    src/xwa_runtime/config/modern_mods_screen.h
     src/xwa/audio/cd_audio.h
     src/xwa/audio/music.h
     src/xwa/config/game_config.h
@@ -903,6 +849,8 @@ set(XWA_FORMAT_HEADERS
     src/xwa_app/options/bindings_editor.h
     src/xwa_app/options/controller_page.h
     src/xwa_app/options/keyboard_page.h
+    src/xwa_app/options/mods_page.h
+    src/xwa_app/options/mods_page_internal.h
     src/xwa_app/options/mouse_page.h
     src/xwa_app/options/video_page.h
     src/xwa_app/options/options_window.h
@@ -920,7 +868,6 @@ set(XWA_FORMAT_HEADERS
     tools/mod_importer/import.h
     tools/mod_importer/import_internal.h
     tools/mod_importer/stock_symbols.h
-    tools/mod_importer/app/ui.h
 )
 
 set(XWA_FORMAT_FILES

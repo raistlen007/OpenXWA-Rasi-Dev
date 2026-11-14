@@ -1,7 +1,7 @@
 /*
  * xwa_mod_import imports an XWA Upgrade installation, such as XWAU or a TFTC
- * release, into an OpenXWA mod folder. It is the command-line form of the
- * OpenXWA Mod Importer, for development.
+ * release, into an OpenXWA mod folder. It runs the same import as the Mods
+ * tab of OpenXWA's options window, for development.
  *
  * Usage:
  *   xwa_mod_import --source DIR --mod DIR [--game DIR] [--name TEXT]

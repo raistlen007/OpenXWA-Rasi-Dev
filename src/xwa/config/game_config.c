@@ -39,8 +39,6 @@
 
 #ifdef XWA_MODERN
 #include "xwa_runtime/config/modern_input_options.h"
-#include "xwa_runtime/config/modern_mods.h"
-#include "xwa_runtime/config/modern_mods_screen.h"
 #include "xwa_runtime/config/modern_pilot_profiles_screen.h"
 #include "xwa_runtime/config/modern_video_options.h"
 #include "xwa_runtime/config/option_section.h"
@@ -180,13 +178,9 @@ int Config_MainMenuScreen(void) {
 	}
 #endif
 
-#ifdef XWA_MODERN
-	/* OpenXWA Options and Pilot Profiles, and outside flight, Mods. General
-	   Performance Tuning and Game Controller Options are not shown. */
-	rowCount = g_configRestrictedOptionsModalActive ? 7 : 11;
-#else
+	/* In OpenXWA, OpenXWA Options and Pilot Profiles take the rows of General
+	   Performance Tuning and Game Controller Options. */
 	rowCount = g_configRestrictedOptionsModalActive ? 7 : 10;
-#endif
 	y = 215 - ((25 * rowCount) >> 1);
 	keyState = (char)Config_GetMenuNavKey();
 	if (keyState == CONFIG_KEY_VK_UP) {
@@ -442,30 +436,6 @@ int Config_MainMenuScreen(void) {
 	}
 	y += 25;
 	++rowIndex;
-
-	/* The mod is chosen at startup, so it can't change during a flight. */
-	if (!g_configRestrictedOptionsModalActive) {
-		text = "Mods";
-		titleWidth = FrontendText_MeasureWidth(text, 20);
-		textX = g_configMenuCenterX - (int)(titleWidth >> 1);
-		buttonPressed =
-			FrontendButton_DrawMenuButton(textX, y, text, 20, g_colorPaleBlue, 31, 0, "settingsound");
-		if (g_menuCursorRow == rowIndex) {
-			FrontendText_Draw(20, text, textX, y, g_colorGreen);
-			if (keyState == CONFIG_KEY_ENTER) {
-				FrontendSound_PlayUISound("settingsound", 1, 0, 255, 12 * g_gameConfig.sfxDatapadVolume, 63);
-				Keyboard_FlushCharBuffer();
-				keyState = 0;
-				buttonPressed = 1;
-			}
-		}
-		if (buttonPressed) {
-			g_pendingMenuScreen = 23;
-			g_menuCursorRow = 0;
-		}
-		y += 25;
-		++rowIndex;
-	}
 #endif
 
 	text = FrontendString_Get(STR_CONFIG_RETURN_TO_GAME);
@@ -2530,7 +2500,7 @@ static void Config_FinishOptionsDatapadClose(void) {
    The datapad redraws the current screen every frame inside its clip
    rectangle, so it shows only the main menu title meanwhile. */
 static void Config_OpenXwaOptionsScreen(void) {
-	const int rowCount = g_configRestrictedOptionsModalActive ? 7 : 11;
+	const int rowCount = g_configRestrictedOptionsModalActive ? 7 : 10;
 	const int y = 215 - ((25 * rowCount) >> 1);
 	const char* text;
 	unsigned int titleWidth;
@@ -2662,13 +2632,6 @@ int Config_OptionsDatapadUpdate(int frameState) {
 			}
 			done = 0;
 			break;
-		case 23:
-			if (XwaModernModsScreen_Update(g_configMenuCenterX, &g_menuCursorRow)) {
-				g_pendingMenuScreen = 0;
-				g_menuCursorRow = 8;
-			}
-			done = 0;
-			break;
 		case 24:
 			Config_OpenXwaOptionsScreen();
 			done = 0;
@@ -2700,7 +2663,6 @@ int Config_OptionsDatapadUpdate(int frameState) {
 		XwaModernVideoOptions_Flush();
 		XwaModernInputOptions_Flush();
 		XwaOptionSection_FlushAll();
-		XwaModernMods_Flush();
 		if (Movie_Play("dpclose", 1)) {
 			g_configOptionsDatapadClosingMovie = 1;
 			return 0;

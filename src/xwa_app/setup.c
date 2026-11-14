@@ -256,6 +256,7 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 						char* error, size_t error_size) {
 	const int from_launch = launch->mod_path[0] != 0;
 	const char* problem = NULL;
+	const char* advice = NULL;
 	XwaModEntry mod;
 	int length;
 
@@ -277,9 +278,11 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 	}
 	if (!XwaModList_Read(selected, &mod)) {
 		snprintf(mod.name, sizeof mod.name, "%s", selected);
-		problem = "Its folder has no mod.yaml, so it isn't a mod.";
+		problem = "Its folder is missing, or has no mod.yaml.";
+		advice = "Choose another mod in OpenXWA Options > Mods.";
 	} else if (mod.state != XWA_MOD_UNFINISHED || !from_launch) {
 		problem = mod.problem[0] ? mod.problem : NULL;
+		advice = XwaModList_Advice(&mod, XWA_MOD_ADVICE_STARTUP);
 	}
 	if (problem && from_launch) {
 		snprintf(error, error_size, "--mod %s: %s", selected, problem);
@@ -287,8 +290,8 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 	}
 	if (problem) {
 		snprintf(notice, notice_size,
-				 "The mod \"%s\" can't be used. %s\n\nOpenXWA starts the original game instead.", mod.name,
-				 problem);
+				 "The mod \"%s\" can't be used. %s%s%s\n\nOpenXWA starts with the original game.", mod.name,
+				 problem, advice ? " " : "", advice ? advice : "");
 		selected[0] = '\0';
 		return 1;
 	}

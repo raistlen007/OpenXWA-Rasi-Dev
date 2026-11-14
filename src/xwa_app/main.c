@@ -5,7 +5,7 @@
 #include "host_config.h"
 #include "install_check.h"
 #include "install_paths.h"
-#include "mod_list.h"
+#include "options/mods_page.h"
 #include "options/options_window.h"
 #include "setup.h"
 #include "ui.h"
@@ -13,7 +13,6 @@
 #include "xwa/config/game_config.h"
 #include "xwa_remaster/dynamic_cockpit.h"
 #include "xwa_remaster/xwa_remaster.h"
-#include "xwa_runtime/config/modern_mods.h"
 #include "xwa_runtime/config/option_section.h"
 #include "xwa_runtime/input/capture.h"
 #include "xwa_runtime/input/controller_mapping.h"
@@ -140,52 +139,6 @@ static int persist_modern_input_options(const XwaModernInputOptions* options, ch
 
 static int persist_option_switch(const char* key, int value, char* error, size_t error_size) {
 	return XwaHostConfig_SaveSwitch(Aeron_GetVfs(), key, value, error, error_size);
-}
-
-/* paths.mod. It is kept when the original game is chosen, so the mod stays
- * in the list. */
-static char s_configured_mod[XWA_INSTALL_PATH_CAPACITY];
-
-static int persist_mod_choice(const char* path, char* error, size_t error_size) {
-	if (!path[0]) {
-		return XwaInstallPaths_SaveMod(Aeron_GetVfs(), s_configured_mod, 0, error, error_size);
-	}
-	return XwaInstallPaths_SaveMod(Aeron_GetVfs(), path, 1, error, error_size);
-}
-
-/* Gives the options the mods and the one in use. A mod from --mod is listed
- * too, so it shows as the one in use. */
-static void configure_mods(const XwaLaunchOptions* launch, const XwaHostConfig* host_config,
-						   const char* selected_mod) {
-	XwaModList list;
-	XwaModernModEntry* entries;
-	const char* configured = launch->mod_path[0] ? selected_mod : host_config->paths.mod;
-	char mods_folder[XWA_INSTALL_PATH_CAPACITY] = "";
-	size_t running = SIZE_MAX;
-
-	snprintf(s_configured_mod, sizeof s_configured_mod, "%s", host_config->paths.mod);
-	XwaModList_Folder(host_config->paths.mods, mods_folder, sizeof mods_folder);
-	if (!XwaModList_Scan(mods_folder, configured, &list)) {
-		Aeron_LogError("xwa.config", "the mods can't be listed");
-		return;
-	}
-	entries = (XwaModernModEntry*)calloc(list.count ? list.count : 1, sizeof *entries);
-	if (!entries) {
-		XwaModList_Free(&list);
-		return;
-	}
-	for (size_t i = 0; i < list.count; ++i) {
-		entries[i].name = list.entries[i].name;
-		entries[i].path = list.entries[i].path;
-		entries[i].problem = list.entries[i].problem[0] ? list.entries[i].problem : NULL;
-		if (XwaModList_SamePath(list.entries[i].path, selected_mod)) {
-			running = i;
-		}
-	}
-	XwaModernMods_Configure(entries, list.count, running, launch->mod_path[0] != 0, persist_mod_choice);
-	Aeron_LogInfo("xwa.config", "mods: %zu listed, including the original game", list.count);
-	free(entries);
-	XwaModList_Free(&list);
 }
 
 /* Shows a setup message about a problem that the player can fix. Unlike
@@ -486,7 +439,6 @@ int main(int argc, char** argv) {
 	} else {
 		Aeron_LogInfo("xwa.config", "mod: %s", selected_mod);
 	}
-	configure_mods(&launch, &host_config, selected_mod);
 	Aeron_LogInfo("xwa.config", "resources: %s", Aeron_ResourceRoot());
 	Aeron_LogInfo("xwa.config", "flight simulation step: %d ticks", host_config.flight_simulation_step_ticks);
 	Aeron_LogInfo("xwa.config", "OPT smoothing angle: %.3g degrees",
@@ -550,6 +502,14 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	{
+		const XwaModsPageSetup mods_setup = {
+			.game_data = selected_game_data,
+			.running_mod = selected_mod,
+			.launch_override = launch.mod_path[0] != 0,
+		};
+		XwaModsPage_Init(XwaAppUi_Context(&app_ui), &mods_setup);
+	}
+	{
 		XwaModernVideoOptions effective_video_options;
 		XwaRemaster_GetVideoOptions(&effective_video_options);
 		effective_video_options.window_mode = initial_window_mode;
@@ -604,6 +564,12 @@ int main(int argc, char** argv) {
 		while (!Aeron_QuitRequested() && !XwaPort_ShouldQuit()) {
 			const uint64_t frame_start_us = Aeron_NowUs();
 			const int32_t delta_us = Aeron_BeginFrame();
+			/* The window's close button or Cmd+Q during an import or a delete
+			   of the Mods tab: the tab asks first, or quits when the delete
+			   ends. */
+			if (Aeron_QuitRequested() && XwaModsPage_RequestQuit()) {
+				Aeron_ClearQuitRequest();
+			}
 			const AeronInputSnapshot* in = Aeron_InputSnapshot();
 			int toggled = 0;
 			/* With a fixed render size, the 2D frame takes the render's shape,

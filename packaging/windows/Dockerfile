@@ -301,7 +301,7 @@ RUN case "${XWA_BUILD_TYPE}" in \
         -DXWA_BUILD_TOOLS=ON \
         -DXWA_ENABLE_DEBUG_UI="${xwa_debug_ui}" \
         -DXWA_VERSION="${XWA_VERSION}" \
-    && cmake --build /build/xwa --target xwa xwa_mod_importer --parallel
+    && cmake --build /build/xwa --target xwa --parallel
 
 # Release builds compile with -g so that crash reports can be symbolized.
 # The debug information goes into a .debug file for each program, which is
@@ -310,12 +310,11 @@ RUN case "${XWA_BUILD_TYPE}" in \
 # file, so the code addresses match the symbols exactly.
 RUN mkdir -p /build/package/openxwa-windows-x86_64/licenses \
         /build/package/openxwa-windows-x86_64/shaders \
-    && cp /build/xwa/OpenXWA.exe "/build/xwa/OpenXWA Mod Importer.exe" \
-        /build/package/openxwa-windows-x86_64/ \
+    && cp /build/xwa/OpenXWA.exe /build/package/openxwa-windows-x86_64/ \
     && if [ "${XWA_BUILD_TYPE}" = Release ]; then \
         mkdir -p /build/symbols \
         && cd /build/package/openxwa-windows-x86_64 \
-        && for program in OpenXWA.exe "OpenXWA Mod Importer.exe"; do \
+        && for program in OpenXWA.exe; do \
             x86_64-w64-mingw32ucrt-objcopy --only-keep-debug "$program" "/build/symbols/${program}.debug" \
             && cp "/build/symbols/${program}.debug" . \
             && x86_64-w64-mingw32ucrt-objcopy --strip-debug --add-gnu-debuglink="${program}.debug" "$program" \
@@ -389,16 +388,13 @@ RUN test -f /build/package/openxwa-windows-x86_64/shaders/hyperspace_streak.vert
     && x86_64-w64-mingw32ucrt-objdump -p \
         /build/package/openxwa-windows-x86_64/OpenXWA.exe \
         | grep -Eq 'Subsystem[[:space:]]+00000002' \
-    && x86_64-w64-mingw32ucrt-objdump -p \
-        "/build/package/openxwa-windows-x86_64/OpenXWA Mod Importer.exe" \
-        | grep -Eq 'Subsystem[[:space:]]+00000002' \
     && if [ "${XWA_BUILD_TYPE}" = Debug ]; then \
         x86_64-w64-mingw32ucrt-objdump -h \
             /build/package/openxwa-windows-x86_64/OpenXWA.exe \
             | grep -q '\.debug_info' \
         && test -f /build/package/openxwa-windows-x86_64/WinPixEventRuntime.dll; \
     else \
-        for program in OpenXWA.exe "OpenXWA Mod Importer.exe"; do \
+        for program in OpenXWA.exe; do \
             ! x86_64-w64-mingw32ucrt-objdump -h \
                 "/build/package/openxwa-windows-x86_64/${program}" \
                 | grep -q '\.debug_info' \

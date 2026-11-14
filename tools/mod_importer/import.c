@@ -366,12 +366,12 @@ XwaModImportCheck XwaModImport_Check(const XwaModImportOptions* options, char* e
 	XwaModImportInstall install;
 	char path[IMPORT_PATH_CAP], detect[256];
 	if (!XwaModImport_Detect(options->source, &install, detect, sizeof detect)) {
-		snprintf(error, error_cap, "Installation: %s", detect);
+		snprintf(error, error_cap, "%s", detect);
 		return XWA_MOD_IMPORT_CHECK_INVALID;
 	}
 	if (!options->game || !IsDir(options->game) ||
 		!Import_FindNoCase(options->game, "FlightModels", true, path, sizeof path)) {
-		snprintf(error, error_cap, "Original game: this isn't an X-Wing Alliance folder.");
+		snprintf(error, error_cap, "The game folder isn't an X-Wing Alliance folder.");
 		return XWA_MOD_IMPORT_CHECK_INVALID;
 	}
 	if (!options->resources || !PathFormat(path, sizeof path, "%s/assets/fonts", options->resources) ||
@@ -400,14 +400,12 @@ XwaModImportCheck XwaModImport_Check(const XwaModImportOptions* options, char* e
 		case FOLDER_IMPORTED:
 			if (options->replace)
 				return XWA_MOD_IMPORT_CHECK_OK;
-			snprintf(error, error_cap,
-					 "The mod folder has a mod made by the importer. Importing replaces it.");
+			snprintf(error, error_cap, "A mod with this name already exists. Importing replaces it.");
 			return XWA_MOD_IMPORT_CHECK_REPLACE;
 		case FOLDER_OTHER:
 			break;
 	}
-	snprintf(error, error_cap,
-			 "The mod folder already has other files in it. Choose another mod name or mods folder.");
+	snprintf(error, error_cap, "The mods folder already has a folder with this name. Choose another name.");
 	return XWA_MOD_IMPORT_CHECK_INVALID;
 }
 
