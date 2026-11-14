@@ -69,8 +69,9 @@ bool Import_FindNoCase(const char* dir, const char* name, bool want_dir, char* o
 XwaModImportLogRing* ImportLog_CreateRing(void);
 void ImportLog_FreeRing(XwaModImportLogRing* ring);
 
-/* Sends the tool log and SDL's log to the ring and to the echo callback of
- * the options. */
+/* Sends the tool log, and what the calling thread and the threads it starts
+ * log through SDL, to the ring and to the echo callback of the options. Call
+ * it and ImportLog_Close on the same thread. */
 void ImportLog_Open(XwaModImportProgress* progress, const XwaModImportOptions* options);
 /* Also writes the log to file `path`. */
 bool ImportLog_SetFile(XwaModImportProgress* progress, const char* path);

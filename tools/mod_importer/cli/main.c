@@ -39,6 +39,7 @@
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_stdinc.h>
 
+#include "aeron/log.h"
 #include "aeron/sync.h"
 #include "import.h"
 #include "tool_log.h"
@@ -108,6 +109,8 @@ static bool parse_int(const char* text, int low, int high, int* out) {
 
 int main(int argc, char** argv) {
 	XwaModImportOptions options = { .echo = echo };
+	/* The import's SDL lines then go to its log (import.h). */
+	Aeron_LogInstallOutput();
 	char game[4096], resources[4096], name[256];
 	char** only = calloc((size_t)argc, sizeof *only);
 	size_t only_count = 0;
