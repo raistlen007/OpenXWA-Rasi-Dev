@@ -3,6 +3,7 @@
 #include "aeron/aeron.h"
 #include "aeron/time.h"
 #include "mod_format.h"
+#include "mod_update.h"
 #include "options/mods_page_internal.h"
 #include "options/options_window.h"
 
@@ -150,7 +151,7 @@ int XwaModsPage_PathRow(const char* label, XwaModsBrowse browse, const char* tit
 
 /* The short status at the right of a mod's row. The details below the list
    say the whole problem. */
-static const char* mod_status(const XwaModEntry* entry, int running, int chosen) {
+static const char* mod_status(const XwaModEntry* entry, unsigned flags, int running, int chosen) {
 	switch (entry->state) {
 		case XWA_MOD_UNFINISHED:
 			return "Incomplete";
@@ -161,6 +162,10 @@ static const char* mod_status(const XwaModEntry* entry, int running, int chosen)
 		case XWA_MOD_READY:
 			break;
 	}
+	if (flags & XWA_MODS_MARKED)
+		return "Deleted at Restart";
+	if (flags & XWA_MODS_UPDATE)
+		return "Update Ready";
 	return running ? "In Use" : chosen ? "Next Start" : NULL;
 }
 
@@ -174,11 +179,16 @@ static void free_list(void) {
 	XwaModsPage* p = &g_xwaModsPage;
 	XwaModList_Free(&p->mods);
 	free(p->mod_items);
-	free(p->mod_imported);
+	free(p->mod_flags);
 	p->mod_items = NULL;
-	p->mod_imported = NULL;
+	p->mod_flags = NULL;
 }
 
+static void start_delete(size_t index, XwaModsDelete kind);
+
+/* Lists the mods. A mod that isn't in use gets the new import waiting in its
+   staging folder, and a mod that isn't in use and is marked for deletion is
+   deleted, as their files are free. */
 static void scan_mods(void) {
 	XwaModsPage* p = &g_xwaModsPage;
 	char current[XWA_MODS_PATH_CAP] = "";
@@ -187,16 +197,34 @@ static void scan_mods(void) {
 	p->mod_running = SIZE_MAX;
 	p->mods_notice[0] = '\0';
 	p->mods_scanned = 1;
-	if (!XwaModList_Scan(p->saved_mods_folder, p->config.mod, &p->mods)) {
+	/* A mod outside the mods folder is listed too: the --mod folder, or else
+	   the saved choice. */
+	if (!XwaModList_Scan(p->saved_mods_folder, p->launch_override ? p->running_mod : p->config.mod,
+						 &p->mods)) {
 		snprintf(p->mods_message, sizeof p->mods_message, "OpenXWA can't list the mods. Try Refresh.");
 		return;
 	}
+	bool applied = false;
+	for (size_t i = 0; i < p->mods.count; ++i) {
+		const XwaModEntry* entry = &p->mods.entries[i];
+		if (entry->imported && !is_mod(entry, p->running_mod) && XwaModUpdate_HasUpdate(entry->path))
+			applied |= XwaModUpdate_Apply(entry->path) == XWA_MOD_UPDATE_APPLIED;
+	}
+	if (applied) {
+		XwaModList_Free(&p->mods);
+		if (!XwaModList_Scan(p->saved_mods_folder, p->launch_override ? p->running_mod : p->config.mod,
+							 &p->mods)) {
+			snprintf(p->mods_message, sizeof p->mods_message, "OpenXWA can't list the mods. Try Refresh.");
+			return;
+		}
+	}
 	p->mod_items = calloc(p->mods.count, sizeof *p->mod_items);
-	p->mod_imported = calloc(p->mods.count, sizeof *p->mod_imported);
-	if (!p->mod_items || !p->mod_imported) {
+	p->mod_flags = calloc(p->mods.count, sizeof *p->mod_flags);
+	if (!p->mod_items || !p->mod_flags) {
 		free_list();
 		return;
 	}
+	size_t free_marked = SIZE_MAX;
 	/* The mod that OpenXWA uses at its next start, as XwaSetup_SetModRoot
 	   picks it without --mod. */
 	if (p->config_ok && p->config.use_mod)
@@ -209,19 +237,29 @@ static void scan_mods(void) {
 			p->mod_chosen = i;
 		if (running)
 			p->mod_running = i;
-#if XWA_HAS_MOD_IMPORT
-		p->mod_imported[i] = entry->path[0] && XwaModImport_IsImported(entry->path);
-#endif
+		unsigned flags = 0;
+		if (entry->path[0] && entry->imported) {
+			flags |= XWA_MODS_IMPORTED;
+			if (XwaModUpdate_HasUpdate(entry->path))
+				flags |= XWA_MODS_UPDATE;
+			if (XwaModUpdate_IsMarkedDelete(entry->path))
+				flags |= XWA_MODS_MARKED;
+		}
+		if ((flags & XWA_MODS_MARKED) && !running && free_marked == SIZE_MAX)
+			free_marked = i;
+		p->mod_flags[i] = (unsigned char)flags;
 		p->mod_items[i] = (AeronUiListItem) {
 			.id = i,
 			.label = entry->name,
-			.detail = mod_status(entry, running, chosen && !running),
+			.detail = mod_status(entry, flags, running, chosen && !running),
 			/* The mod in use stands out. */
-			.flags = entry->problem[0] ? AERON_UI_LIST_ITEM_DIMMED
-					 : running         ? AERON_UI_LIST_ITEM_ACCENT
-									   : AERON_UI_LIST_ITEM_NONE,
+			.flags = entry->problem[0] || (flags & XWA_MODS_MARKED) ? AERON_UI_LIST_ITEM_DIMMED
+					 : running                                      ? AERON_UI_LIST_ITEM_ACCENT
+																	: AERON_UI_LIST_ITEM_NONE,
 		};
 	}
+	if (free_marked != SIZE_MAX && !p->delete_thread && !p->thread)
+		start_delete(free_marked, XWA_MODS_DELETE_MOD);
 	/* The list leaves out a configured mod without a mod.yaml, such as one
 	   whose folder was deleted. */
 	if (current[0] && p->mod_chosen == SIZE_MAX)
@@ -232,28 +270,58 @@ static void scan_mods(void) {
 		p->mod_selected = p->mod_running;
 }
 
-#if XWA_HAS_MOD_IMPORT
+/* Deletes the staging folder, and the mod unless only its update goes. A
+   delete can't stop halfway: it runs to its end. */
 static int delete_thread(void* user) {
 	XwaModsPage* p = user;
-	Aeron_AtomicStore(&p->delete_ok, XwaModImport_Delete(p->delete_path));
+	char staging[XWA_MODS_PATH_CAP];
+	bool ok = !XwaModUpdate_StagingFolder(p->delete_path, staging, sizeof staging) ||
+			  XwaModUpdate_DeleteFolder(staging, NULL);
+	if (ok && p->delete_kind == XWA_MODS_DELETE_MOD)
+		ok = XwaModUpdate_DeleteFolder(p->delete_path, NULL);
+	Aeron_AtomicStore(&p->delete_ok, ok);
 	Aeron_AtomicStore(&p->delete_done, 1);
 	return 0;
 }
 
-static void start_delete(void) {
+static void start_delete(size_t index, XwaModsDelete kind) {
 	XwaModsPage* p = &g_xwaModsPage;
-	const XwaModEntry* entry = &p->mods.entries[p->mod_selected];
+	const XwaModEntry* entry = &p->mods.entries[index];
 	snprintf(p->delete_path, sizeof p->delete_path, "%s", entry->path);
 	snprintf(p->delete_name, sizeof p->delete_name, "%s", entry->name);
+	p->delete_kind = kind;
 	Aeron_AtomicStore(&p->delete_done, 0);
 	Aeron_AtomicStore(&p->delete_ok, 0);
 	p->delete_thread = Aeron_ThreadCreate("mod delete", delete_thread, p);
-	if (p->delete_thread)
-		snprintf(p->mods_message, sizeof p->mods_message, "Deleting %s...", p->delete_name);
-	else
+	if (!p->delete_thread)
 		snprintf(p->mods_message, sizeof p->mods_message, "%s couldn't be deleted.", p->delete_name);
+	else if (kind == XWA_MODS_DELETE_UPDATE)
+		snprintf(p->mods_message, sizeof p->mods_message, "Discarding the new import of %s...",
+				 p->delete_name);
+	else
+		snprintf(p->mods_message, sizeof p->mods_message, "Deleting %s...", p->delete_name);
 }
-#endif
+
+/* Marks the mod in use for deletion at the next start. OpenXWA then starts
+   with the original game if it was the choice. */
+static void mark_delete(size_t index) {
+	XwaModsPage* p = &g_xwaModsPage;
+	const XwaModEntry* entry = &p->mods.entries[index];
+	char error[512];
+	if (!XwaModUpdate_MarkDelete(entry->path, true)) {
+		snprintf(p->mods_message, sizeof p->mods_message, "OpenXWA can't mark %s for deletion.", entry->name);
+		return;
+	}
+	/* paths.mod stays, so the next start finds the mod outside the mods
+	   folder too. */
+	if (index == p->mod_chosen &&
+		!XwaInstallPaths_SaveMod(Aeron_GetVfs(), entry->path, 0, error, sizeof error))
+		snprintf(p->mods_message, sizeof p->mods_message, "OpenXWA can't save the mod choice: %s", error);
+	else
+		p->mods_message[0] = '\0';
+	XwaModsPage_LoadConfig();
+	p->mods_scanned = 0;
+}
 
 /* Joins the delete thread once it has finished. */
 static void finish_delete(void) {
@@ -267,6 +335,9 @@ static void finish_delete(void) {
 		snprintf(p->mods_message, sizeof p->mods_message,
 				 "Some files of %s couldn't be deleted. Close any program that uses them and try again, or "
 				 "delete the folder with Show Folder.",
+				 p->delete_name);
+	} else if (p->delete_kind == XWA_MODS_DELETE_UPDATE) {
+		snprintf(p->mods_message, sizeof p->mods_message, "The new import of %s was discarded.",
 				 p->delete_name);
 	} else if (p->config_ok && XwaModList_SamePath(p->config.mod, p->delete_path)) {
 		/* OpenXWA would warn that the mod is missing at every start. */
@@ -308,9 +379,10 @@ static void draw_list(void) {
 		AeronUi_Error(ui, p->mods_notice);
 
 	/* Below the list: the name, folder, problem and advice of the selected
-	   mod, the restart line and a message. A long folder takes more lines. */
+	   mod, a note, the restart line and a message. A long folder takes more
+	   lines. */
 	const float line = AeronUi_MeasureHelpHeight(ui, "X", 0.0f) + theme->item_spacing;
-	const float details = theme->row_height + theme->item_spacing + 5.0f * line;
+	const float details = theme->row_height + theme->item_spacing + 6.0f * line;
 	AeronUi_ListBox(ui, "Mods", p->mod_items, p->mod_items ? p->mods.count : 0, &p->mod_selected,
 					fmaxf(120.0f, XwaModsPage_ContentHeight() - XWA_MODS_BUTTON_ROWS_REF - details));
 	const XwaModEntry* selected =
@@ -329,7 +401,20 @@ static void draw_list(void) {
 			snprintf(text, sizeof text, "%s%s%s", selected->problem, advice ? " " : "", advice ? advice : "");
 			AeronUi_Error(ui, text);
 		}
+		const unsigned flags = p->mod_flags[p->mod_selected];
+		const int running = p->mod_selected == p->mod_running;
+		if (flags & XWA_MODS_MARKED)
+			AeronUi_Error(ui, "Restart OpenXWA to delete it.");
+		else if ((flags & XWA_MODS_UPDATE) && running)
+			AeronUi_Error(ui, "Restart OpenXWA to play with the new import.");
+		/* Why Delete is off: the next start with --mod would read the mod
+		   again before it could be deleted. */
+		if (running && p->launch_override && (flags & XWA_MODS_IMPORTED) && !(flags & XWA_MODS_MARKED))
+			AeronUi_Help(ui,
+						 "OpenXWA is using this mod. To delete it, choose another mod and restart OpenXWA.");
 	}
+	if (p->launch_override)
+		AeronUi_Help(ui, "OpenXWA was started with --mod, so you can't choose another mod here.");
 	/* The choice applies at the next start, so say so only when it changed.
 	   With --mod, the next start without it uses the choice. */
 	if (!p->launch_override && p->mod_chosen < p->mods.count && p->mod_chosen != p->mod_running) {
@@ -348,36 +433,52 @@ static void draw_list(void) {
 	AeronUi_Spacer(ui, fmaxf(0.0f, XwaModsPage_ContentHeight() - XWA_MODS_BUTTON_ROWS_REF));
 	AeronUi_Separator(ui);
 	const int idle = !p->delete_thread && !p->thread;
+	const unsigned flags = selected ? p->mod_flags[p->mod_selected] : 0;
+	const int running = selected && p->mod_selected == p->mod_running;
+	/* Only a mod that the importer made: it can be imported again. */
+	const int ours = idle && (flags & XWA_MODS_IMPORTED);
 #if XWA_HAS_MOD_IMPORT
-	AeronUi_BeginColumns(ui, 5, NULL);
+	AeronUi_BeginColumns(ui, 6, NULL);
 	if (AeronUi_ButtonEnabled(ui, "Import a Mod...", idle && !p->dialog)) {
 		/* The import goes in the mods folder of the field. */
 		if (p->mods_folder_edit_us)
 			XwaModsPage_ApplyModsFolder();
-		p->view = XWA_MODS_VIEW_FORM;
-		p->checked = 0;
+		XwaModsImport_OpenForm(NULL);
+	}
+	AeronUi_NextColumn(ui);
+	/* A new import waiting to replace the mod can be discarded. Importing
+	   again then starts from the mod as it is. */
+	if (flags & XWA_MODS_UPDATE) {
+		if (AeronUi_ButtonEnabled(ui, "Discard Update", ours))
+			start_delete(p->mod_selected, XWA_MODS_DELETE_UPDATE);
+	} else if (AeronUi_ButtonEnabled(ui, "Import Again", ours && !(flags & XWA_MODS_MARKED) && !p->dialog)) {
+		XwaModsImport_OpenForm(selected);
 	}
 	AeronUi_NextColumn(ui);
 #else
-	AeronUi_BeginColumns(ui, 3, NULL);
+	AeronUi_BeginColumns(ui, 4, NULL);
 #endif
-	const int usable = idle && p->config_ok && selected && p->mod_selected != p->mod_chosen &&
-					   selected->state == XWA_MOD_READY;
+	const int usable = idle && p->config_ok && !p->launch_override && selected &&
+					   p->mod_selected != p->mod_chosen && selected->state == XWA_MOD_READY &&
+					   !(flags & XWA_MODS_MARKED);
 	if (AeronUi_ButtonEnabled(ui, "Use This Mod", usable))
 		XwaModsPage_UseMod(selected->path, p->mods_message, sizeof p->mods_message);
 	AeronUi_NextColumn(ui);
 	if (AeronUi_ButtonEnabled(ui, "Show Folder", folder[0] != '\0') && !Aeron_OpenFolder(folder))
 		snprintf(p->mods_message, sizeof p->mods_message, "Couldn't open %s.", folder);
 	AeronUi_NextColumn(ui);
-#if XWA_HAS_MOD_IMPORT
-	/* Only a mod that the importer made, as it can be imported again, and
-	   not the one in use, whose files OpenXWA reads. */
-	const int deletable =
-		idle && selected && p->mod_imported[p->mod_selected] && p->mod_selected != p->mod_running;
-	if (AeronUi_ButtonEnabled(ui, "Delete...", deletable))
+	/* The mod in use is deleted at the next start, unless --mod chose it. */
+	if (flags & XWA_MODS_MARKED) {
+		if (AeronUi_ButtonEnabled(ui, "Cancel Delete", idle)) {
+			if (!XwaModUpdate_MarkDelete(selected->path, false))
+				snprintf(p->mods_message, sizeof p->mods_message, "OpenXWA can't cancel the delete of %s.",
+						 selected->name);
+			p->mods_scanned = 0;
+		}
+	} else if (AeronUi_ButtonEnabled(ui, "Delete...", ours && !(running && p->launch_override))) {
 		p->delete_open = 1;
+	}
 	AeronUi_NextColumn(ui);
-#endif
 	if (AeronUi_ButtonEnabled(ui, "Refresh", idle)) {
 		p->mods_message[0] = '\0';
 		p->mods_scanned = 0;
@@ -456,14 +557,16 @@ void XwaModsPage_DrawModals(void) {
 	XwaModsPage* p = &g_xwaModsPage;
 	AeronUiContext* ui = p->ui;
 	const AeronUiWindowDesc desc = { .width_ref = 900.0f, .centered = 1 };
-#if XWA_HAS_MOD_IMPORT
 	if (p->delete_open && AeronUi_BeginModal(ui, "Delete the Mod", &p->delete_open, &desc)) {
 		/* The selection can't change while the modal is open. */
 		const XwaModEntry* entry = p->mod_selected < p->mods.count ? &p->mods.entries[p->mod_selected] : NULL;
+		const int running = p->mod_selected == p->mod_running;
 		/* The name and the folder on their own lines, as a folder can be
 		   long. */
 		if (entry) {
-			AeronUi_Help(ui, "This deletes the mod and its folder:");
+			AeronUi_Help(ui, running ? "OpenXWA is using this mod, so it is deleted the next time OpenXWA "
+									   "starts, with its folder:"
+									 : "This deletes the mod and its folder:");
 			AeronUi_Label(ui, entry->name);
 			AeronUi_Help(ui, entry->path);
 			AeronUi_Spacer(ui, 12.0f);
@@ -478,15 +581,16 @@ void XwaModsPage_DrawModals(void) {
 		AeronUi_NextColumn(ui);
 		if (AeronUi_ButtonEnabled(ui, "Delete", entry != NULL)) {
 			p->delete_open = 0;
-			start_delete();
+			if (running)
+				mark_delete(p->mod_selected);
+			else
+				start_delete(p->mod_selected, XWA_MODS_DELETE_MOD);
 		}
 		AeronUi_EndColumns(ui);
 		AeronUi_EndModal(ui);
 	}
+#if XWA_HAS_MOD_IMPORT
 	XwaModsImport_DrawModals();
-#else
-	(void)ui;
-	(void)desc;
 #endif
 }
 

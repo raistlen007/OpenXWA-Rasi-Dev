@@ -1,6 +1,7 @@
 #include "setup.h"
 
 #include "mod_list.h"
+#include "mod_update.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -257,7 +258,9 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 	const int from_launch = launch->mod_path[0] != 0;
 	const char* problem = NULL;
 	const char* advice = NULL;
+	char mods_folder[XWA_INSTALL_PATH_CAPACITY];
 	XwaModEntry mod;
+	XwaModUpdateResult update;
 	int length;
 
 	if (notice_size) {
@@ -265,6 +268,11 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 	}
 	if (selected_capacity) {
 		selected[0] = '\0';
+	}
+	/* Before any mod is read: the mods deleted while OpenXWA used them go to
+	   the trash. */
+	if (XwaModList_Folder(paths->mods, mods_folder, sizeof mods_folder)) {
+		XwaModUpdate_DeletePending(mods_folder, paths->mod);
 	}
 	if (from_launch) {
 		length = snprintf(selected, selected_capacity, "%s", launch->mod_path);
@@ -276,6 +284,8 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 	if (length < 0 || (size_t)length >= selected_capacity) {
 		return setup_error(error, error_size, "could not use mod folder: %s", selected);
 	}
+	/* A new import made while OpenXWA used the mod takes its place. */
+	update = XwaModUpdate_Apply(selected);
 	if (!XwaModList_Read(selected, &mod)) {
 		snprintf(mod.name, sizeof mod.name, "%s", selected);
 		problem = "Its folder is missing, or has no mod.yaml.";
@@ -294,6 +304,12 @@ int XwaSetup_SetModRoot(AeronVfs* vfs, const XwaLaunchOptions* launch, const Xwa
 				 problem, advice ? " " : "", advice ? advice : "");
 		selected[0] = '\0';
 		return 1;
+	}
+	if (update == XWA_MOD_UPDATE_FAILED) {
+		snprintf(notice, notice_size,
+				 "The new import of \"%s\" couldn't replace the old one, because a program is using its folder:\n"
+				 "%s\n\nOpenXWA starts with the old one, and tries again the next time it starts.",
+				 mod.name, selected);
 	}
 	if (!AeronVfs_SetRoot(vfs, AERON_VFS_ROOT_MOD, selected) ||
 		!AeronVfs_SetRootOptions(vfs, AERON_VFS_ROOT_MOD, AERON_VFS_ROOT_OPTION_CASE_INSENSITIVE_LOOKUP)) {

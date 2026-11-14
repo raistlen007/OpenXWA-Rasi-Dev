@@ -120,7 +120,8 @@ bool XwaModImport_Detect(const char* source, XwaModImportInstall* info, char* er
 
 /* The folder of the mod `name` in the mods folder `mods`: <mods>/<name>, with
  * the name in lower case and other characters than letters, digits, '.' and
- * '-' replaced by '-'. */
+ * '-' replaced by '-'. A '.' at the start is replaced by '-' too: those
+ * folders hold the staging and trash folders of the mods. */
 bool XwaModImport_ModFolder(const char* mods, const char* name, char* out, size_t cap);
 
 /* Whether folder `dir` holds a mod that the importer made. */

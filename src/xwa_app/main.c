@@ -5,6 +5,8 @@
 #include "host_config.h"
 #include "install_check.h"
 #include "install_paths.h"
+#include "mod_list.h"
+#include "mod_update.h"
 #include "options/mods_page.h"
 #include "options/options_window.h"
 #include "setup.h"
@@ -552,6 +554,14 @@ int main(int argc, char** argv) {
 	}
 
 	exit_code = 0;
+	/* The mods replaced or deleted at startup are deleted in the
+	 * background. */
+	{
+		char mods_folder[XWA_INSTALL_PATH_CAPACITY];
+		if (XwaModList_Folder(host_config.paths.mods, mods_folder, sizeof mods_folder)) {
+			XwaModUpdate_StartCleanup(mods_folder, host_config.paths.mod);
+		}
+	}
 	/* Cmd+P host pause (the TIE shell model): the game tick is skipped
 	 * — sim and snapshots freeze — while the HD remaster keeps
 	 * rendering the frozen snapshot every frame (debug UI and
@@ -672,6 +682,7 @@ int main(int argc, char** argv) {
 	}
 
 	exit_code = Aeron_FatalErrorRequested() ? 1 : XwaPort_GetExitCode();
+	XwaModUpdate_StopCleanup();
 	XwaOptionsWindow_FlushForExit();
 	XwaOptionsWindow_Shutdown();
 	XwaAppUi_Shutdown(&app_ui);

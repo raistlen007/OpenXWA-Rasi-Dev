@@ -308,6 +308,10 @@ bool XwaModImport_ModFolder(const char* mods, const char* name, char* out, size_
 	for (char* c = folder; *c; ++c)
 		if (!isalnum((unsigned char)*c) && *c != '.' && *c != '-')
 			*c = '-';
+	/* Folders whose name starts with '.' hold the staging and trash folders
+	   of the mods (mod_update.h). */
+	if (folder[0] == '.')
+		folder[0] = '-';
 	const size_t end = strlen(mods);
 	const bool separator = end && (mods[end - 1] == '/' || mods[end - 1] == '\\');
 	return PathFormat(out, cap, "%s%s%s", mods, separator ? "" : "/", folder[0] ? folder : "mod");
@@ -456,6 +460,11 @@ static bool write_mod_yaml(ImportContext* ctx, bool complete) {
 	yaml_quoted(f, options->name && options->name[0] ? options->name : "Mod");
 	fprintf(f, "\ncomplete: %s\nsource: ", complete ? "true" : "false");
 	yaml_quoted(f, options->source);
+	/* The Mods tab imports the mod again with the same folders. */
+	if (options->authoring && options->authoring[0]) {
+		fputs("\nauthoring: ", f);
+		yaml_quoted(f, options->authoring);
+	}
 	fprintf(f, "\nimported: \"%04d-%02d-%02d\"\n", date.year, date.month, date.day);
 	return fclose(f) == 0;
 }

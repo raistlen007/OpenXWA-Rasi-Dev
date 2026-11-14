@@ -38,6 +38,10 @@ typedef struct XwaModEntry {
 	char problem[160];
 	int imported; /* the importer made it */
 	int version;  /* the mod format version of its mod.yaml, or 0 */
+	/* For a mod that the importer made: the installation it came from, and
+	   its authoring folder, or "". */
+	char source[XWA_INSTALL_PATH_CAPACITY];
+	char authoring[XWA_INSTALL_PATH_CAPACITY];
 } XwaModEntry;
 
 /* Where the player reads the advice of XwaModList_Advice. */

@@ -163,6 +163,12 @@ static int mod_list_read(AeronVfs* vfs, const char* path, XwaModEntry* out) {
 	name = AeronConfigFile_GetString(manifest, "name", NULL);
 	snprintf(out->name, sizeof out->name, "%s", name && name[0] ? name : folder[0] ? folder : path);
 	mod_list_check(manifest, out);
+	if (out->imported) {
+		const char* source = AeronConfigFile_GetString(manifest, "source", NULL);
+		const char* authoring = AeronConfigFile_GetString(manifest, "authoring", NULL);
+		snprintf(out->source, sizeof out->source, "%s", source ? source : "");
+		snprintf(out->authoring, sizeof out->authoring, "%s", authoring ? authoring : "");
+	}
 	AeronConfigFile_Destroy(manifest);
 	return 1;
 }

@@ -428,6 +428,7 @@ set(XWA_INSTALL_SOURCES
     src/xwa_app/install_check.c
     src/xwa_app/install_paths.c
     src/xwa_app/mod_list.c
+    src/xwa_app/mod_update.c
 )
 add_library(xwa_install STATIC ${XWA_INSTALL_SOURCES})
 target_include_directories(xwa_install PUBLIC
@@ -858,6 +859,7 @@ set(XWA_FORMAT_HEADERS
     src/xwa_app/install_paths.h
     src/xwa_app/mod_format.h
     src/xwa_app/mod_list.h
+    src/xwa_app/mod_update.h
     src/xwa_app/setup.h
     src/xwa/util/byte_order.h
     src/xwa/util/color.h

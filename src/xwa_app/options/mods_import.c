@@ -3,6 +3,7 @@
 
 #include "aeron/aeron.h"
 #include "aeron/time.h"
+#include "mod_update.h"
 #include "options/mods_page_internal.h"
 
 #include <math.h>
@@ -17,7 +18,7 @@ static void fill_options(bool replace) {
 	p->options = (XwaModImportOptions) {
 		.source = p->source,
 		.game = p->game,
-		.mod = p->mod,
+		.mod = p->staged ? p->staging : p->mod,
 		.name = p->name,
 		.authoring = p->keep_authoring ? p->authoring : NULL,
 		.resources = p->resources,
@@ -54,21 +55,48 @@ static void check_source(void) {
 static void check_fields(void) {
 	XwaModsPage* p = &g_xwaModsPage;
 	check_source();
-	/* The mod goes in the mods folder that OpenXWA lists. */
+	/* The mod goes in the mods folder that OpenXWA lists, or in its own
+	   folder when it is imported again. */
 	p->mod[0] = '\0';
-	if (p->saved_mods_folder[0] && p->name[0])
+	if (p->again[0])
+		snprintf(p->mod, sizeof p->mod, "%s", p->again);
+	else if (p->saved_mods_folder[0] && p->name[0])
 		XwaModImport_ModFolder(p->saved_mods_folder, p->name, p->mod, sizeof p->mod);
 	if (!p->authoring_edited && p->mod[0])
 		snprintf(p->authoring, sizeof p->authoring, "%s-authoring", p->mod);
+	/* A usable mod keeps working until the new import is complete: the
+	   import goes to its staging folder. */
+	XwaModEntry existing;
+	p->staged = p->mod[0] && XwaModList_Read(p->mod, &existing) && existing.imported &&
+				existing.state == XWA_MOD_READY &&
+				XwaModUpdate_StagingFolder(p->mod, p->staging, sizeof p->staging);
 	p->check = XWA_MOD_IMPORT_CHECK_INVALID;
 	p->check_message[0] = '\0';
 	if (!p->name[0]) {
 		snprintf(p->check_message, sizeof p->check_message, "Enter a name for the mod.");
-	} else if (!p->saved_mods_folder[0]) {
+	} else if (!p->mod[0]) {
 		snprintf(p->check_message, sizeof p->check_message, "Choose a mods folder first.");
+	} else if (XwaModUpdate_IsMarkedDelete(p->mod)) {
+		snprintf(p->check_message, sizeof p->check_message,
+				 "This mod is deleted the next time OpenXWA starts. Cancel the delete to import it again.");
+	} else if (!p->staged && p->running_mod[0] && XwaModList_SamePath(p->mod, p->running_mod)) {
+		/* OpenXWA reads the files of the mod in use. */
+		snprintf(p->check_message, sizeof p->check_message,
+				 "OpenXWA is using this mod. To import it again, choose another mod and restart OpenXWA.");
 	} else if (p->source_ok) {
-		fill_options(false);
+		/* A staging folder from an import that didn't finish is replaced
+		   without a word. The player confirms the replacement of the mod,
+		   or of a new import waiting to replace it. */
+		fill_options(p->staged);
 		p->check = XwaModImport_Check(&p->options, p->check_message, sizeof p->check_message);
+		if (p->staged && p->check == XWA_MOD_IMPORT_CHECK_OK) {
+			p->check = XWA_MOD_IMPORT_CHECK_REPLACE;
+			snprintf(p->check_message, sizeof p->check_message, "%s",
+					 XwaModUpdate_HasUpdate(p->mod)
+						 ? "A new import of this mod is ready. Importing again replaces it."
+						 : "A mod with this name already exists. Importing replaces it when the import is "
+						   "complete.");
+		}
 	}
 	p->checked = 1;
 }
@@ -112,7 +140,7 @@ static int import_thread(void* user) {
 
 static void start_import(bool replace) {
 	XwaModsPage* p = &g_xwaModsPage;
-	fill_options(replace);
+	fill_options(replace || p->staged);
 	if (p->progress_ready)
 		XwaModImport_ProgressFree(&p->progress);
 	p->progress_ready = XwaModImport_ProgressInit(&p->progress);
@@ -140,12 +168,21 @@ static void finish_import(void) {
 	XwaModImport_ReadLog(&p->progress, &p->next_line, add_log_line, p);
 	/* A mod that was just imported is the one that the player wants to
 	   play. */
-	if (p->result == XWA_MOD_IMPORT_OK) {
+	const bool running = p->running_mod[0] && XwaModList_SamePath(p->mod, p->running_mod);
+	if (p->result == XWA_MOD_IMPORT_OK && p->staged && !running &&
+		XwaModUpdate_Apply(p->mod) == XWA_MOD_UPDATE_FAILED) {
+		/* The list tries again each time it lists the mods. */
+		snprintf(p->done_message, sizeof p->done_message,
+				 "The new import is ready, but a program is using the folder of the old one. Close it, then "
+				 "press Refresh.");
+	} else if (p->result == XWA_MOD_IMPORT_OK) {
 		if (!p->config_ok)
 			snprintf(p->done_message, sizeof p->done_message,
 					 "The mod is ready, but OpenXWA can't read config.yaml to select it.");
 		else if (XwaModsPage_UseMod(p->mod, p->done_message, sizeof p->done_message))
-			snprintf(p->done_message, sizeof p->done_message, "Restart OpenXWA to play with this mod.");
+			snprintf(p->done_message, sizeof p->done_message, "%s",
+					 p->staged && running ? "Restart OpenXWA to play with the new import."
+										  : "Restart OpenXWA to play with this mod.");
 	}
 	p->view = XWA_MODS_VIEW_DONE;
 	p->cancel_open = 0;
@@ -206,6 +243,9 @@ static void draw_form(void) {
 			snprintf(text, sizeof text, "Saved in %s.", p->mod);
 			AeronUi_Help(ui, text);
 		}
+		if (p->staged)
+			AeronUi_Help(ui, "The new import is made beside the current one, so it needs as much free space "
+							 "as the mod.");
 		if (AeronUi_Toggle(ui, "Keep Authoring Files", &p->keep_authoring))
 			p->checked = 0;
 		AeronUi_Help(ui,
@@ -292,7 +332,12 @@ static void draw_done(void) {
 	/* Help text wraps, and a folder can be longer than the window. */
 	snprintf(line, sizeof line, "Folder: %s", p->mod);
 	AeronUi_Help(ui, line);
-	if (p->result == XWA_MOD_IMPORT_CANCELLED)
+	if (p->result != XWA_MOD_IMPORT_OK && p->staged)
+		AeronUi_Help(ui, p->result == XWA_MOD_IMPORT_CANCELLED
+							 ? "The new import isn't finished. The mod stays as it was."
+							 : "The import stopped because of an error, and the mod stays as it was. Fix the "
+							   "problem below, then import the mod again.");
+	else if (p->result == XWA_MOD_IMPORT_CANCELLED)
 		AeronUi_Help(ui, "The mod isn't finished. Import it again to finish it.");
 	else if (p->result != XWA_MOD_IMPORT_OK)
 		AeronUi_Help(ui, "The import stopped because of an error. Fix the problem below, then import the mod "
@@ -319,7 +364,7 @@ static void draw_done(void) {
 		p->view = XWA_MODS_VIEW_LIST;
 	AeronUi_NextColumn(ui);
 	if (AeronUi_Button(ui, "Import Another"))
-		p->view = XWA_MODS_VIEW_FORM;
+		XwaModsImport_OpenForm(NULL);
 	AeronUi_EndColumns(ui);
 }
 
@@ -371,7 +416,17 @@ void XwaModsImport_DrawModals(void) {
 	const AeronUiWindowDesc desc = { .width_ref = 900.0f, .centered = 1 };
 	char text[XWA_MODS_PATH_CAP + 512];
 	if (p->replace_open && AeronUi_BeginModal(ui, "Replace the Mod", &p->replace_open, &desc)) {
-		snprintf(text, sizeof text, "%s already exists. Importing it again replaces it.", p->name);
+		const bool running = p->running_mod[0] && XwaModList_SamePath(p->mod, p->running_mod);
+		if (!p->staged)
+			snprintf(text, sizeof text, "%s already exists. Importing it again replaces it.", p->name);
+		else if (running)
+			snprintf(text, sizeof text,
+					 "%s already exists. OpenXWA is using it, so the new import replaces it the next time "
+					 "OpenXWA starts.",
+					 p->name);
+		else
+			snprintf(text, sizeof text, "%s already exists. The new import replaces it when it is complete.",
+					 p->name);
 		AeronUi_Help(ui, text);
 		AeronUi_BeginColumns(ui, 2, NULL);
 		if (AeronUi_Button(ui, "Cancel"))
@@ -420,6 +475,24 @@ void XwaModsImport_Cancel(void) {
 		p->cancel_open = 0;
 		Aeron_AtomicStore(&p->progress.cancel, 1);
 	}
+}
+
+void XwaModsImport_OpenForm(const XwaModEntry* entry) {
+	XwaModsPage* p = &g_xwaModsPage;
+	if (entry) {
+		snprintf(p->again, sizeof p->again, "%s", entry->path);
+		snprintf(p->source, sizeof p->source, "%s", entry->source);
+		snprintf(p->name, sizeof p->name, "%s", entry->name);
+		snprintf(p->authoring, sizeof p->authoring, "%s", entry->authoring);
+		p->name_edited = 1;
+		p->keep_authoring = p->authoring_edited = entry->authoring[0] != '\0';
+	} else if (p->again[0]) {
+		/* After Import Again, a new mod starts from an empty form. */
+		p->again[0] = p->source[0] = p->name[0] = p->authoring[0] = '\0';
+		p->name_edited = p->keep_authoring = p->authoring_edited = 0;
+	}
+	p->view = XWA_MODS_VIEW_FORM;
+	p->checked = 0;
 }
 
 void XwaModsImport_RequestQuit(void) {

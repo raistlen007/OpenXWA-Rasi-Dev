@@ -33,6 +33,19 @@ typedef enum XwaModsView {
 } XwaModsView;
 
 /* The field that the folder dialog fills. */
+/* What the list knows of each mod, besides its XwaModEntry. */
+enum {
+	XWA_MODS_IMPORTED = 1u << 0, /* the importer made it */
+	XWA_MODS_UPDATE = 1u << 1,   /* a new import waits in its staging folder */
+	XWA_MODS_MARKED = 1u << 2,   /* it is deleted at the next start */
+};
+
+/* What the delete thread deletes. */
+typedef enum XwaModsDelete {
+	XWA_MODS_DELETE_MOD,    /* the mod, and its staging folder */
+	XWA_MODS_DELETE_UPDATE, /* only its staging folder */
+} XwaModsDelete;
+
 typedef enum XwaModsBrowse {
 	XWA_MODS_BROWSE_SOURCE,
 	XWA_MODS_BROWSE_AUTHORING,
@@ -64,6 +77,14 @@ typedef struct XwaModsPage {
 	   The name follows the installation, and the authoring folder the mod
 	   folder, until the player edits them. */
 	char source[XWA_MODS_PATH_CAP];
+	/* The folder of the mod that Import Again imports again, or "". The
+	   import then goes there whatever the name. */
+	char again[XWA_MODS_PATH_CAP];
+	/* The mod folder holds a usable mod that the importer made, so the
+	   import goes to its staging folder, and replaces it when it is
+	   complete. */
+	bool staged;
+	char staging[XWA_MODS_PATH_CAP];
 	char name[256];
 	char mod[XWA_MODS_PATH_CAP];
 	char authoring[XWA_MODS_PATH_CAP];
@@ -97,9 +118,9 @@ typedef struct XwaModsPage {
 	/* The list. */
 	XwaModList mods;
 	AeronUiListItem* mod_items;
-	unsigned char* mod_imported; /* whether the importer made each mod */
-	size_t mod_chosen;           /* the mod that OpenXWA uses at its next start */
-	size_t mod_running;          /* the mod in use */
+	unsigned char* mod_flags; /* XWA_MODS_IMPORTED and the others, for each mod */
+	size_t mod_chosen;        /* the mod that OpenXWA uses at its next start */
+	size_t mod_running;       /* the mod in use */
 	size_t mod_selected;
 	int mods_scanned;
 	char mods_message[512];
@@ -110,6 +131,7 @@ typedef struct XwaModsPage {
 	int delete_open;
 	AeronThread* delete_thread;
 	volatile int delete_done, delete_ok;
+	XwaModsDelete delete_kind;
 	int quit_after_delete;
 	char delete_path[XWA_MODS_PATH_CAP];
 	char delete_name[256];
@@ -140,6 +162,9 @@ void XwaModsImport_Update(void);
 /* Draws the form, the progress or the summary. */
 void XwaModsImport_Draw(void);
 void XwaModsImport_DrawModals(void);
+/* Opens the import form: empty for a new mod, or filled from `entry` to
+   import that mod again. */
+void XwaModsImport_OpenForm(const XwaModEntry* entry);
 /* Opens the Quit modal while an import runs. */
 void XwaModsImport_RequestQuit(void);
 /* Asks a running import to stop. */
