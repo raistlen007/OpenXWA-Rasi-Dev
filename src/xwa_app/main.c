@@ -570,6 +570,9 @@ int main(int argc, char** argv) {
 	 * input path (edges pump inside the tick). */
 	{
 		int paused = 0;
+		/* The game also pauses while the options window is open, except in a
+		 * network session (XwaPort_OptionsWindowPausesGame). */
+		int options_paused = 0;
 		int last_fullscreen = Aeron_Fullscreen();
 		while (!Aeron_QuitRequested() && !XwaPort_ShouldQuit()) {
 			const uint64_t frame_start_us = Aeron_NowUs();
@@ -612,7 +615,7 @@ int main(int argc, char** argv) {
 			if (host_shortcut_pressed(in, XWA_KEYBOARD_SHORTCUT_HOST_PAUSE)) {
 				paused = !paused;
 				toggled = 1;
-				Aeron_AudioSetPaused(paused);
+				Aeron_AudioSetPaused(paused || options_paused);
 				Aeron_LogInfo("xwa", "%s", paused ? "paused" : "resumed");
 			}
 			/* Ctrl+Alt+L is a portable alias for the original Scroll Lock cockpit
@@ -638,9 +641,15 @@ int main(int argc, char** argv) {
 			if (Aeron_QuitRequested() || XwaPort_ShouldQuit()) {
 				break;
 			}
+			/* The window closes in XwaOptionsWindow_BeginFrame, so the tick of
+			 * the frame that closes it runs, and the datapad sees it closed. */
+			if (XwaPort_OptionsWindowPausesGame() != options_paused) {
+				options_paused = !options_paused;
+				Aeron_AudioSetPaused(paused || options_paused);
+			}
 			/* A frozen film runs no film steps either (film_benchmark.h). */
 			const int film_frozen = XwaFilmBenchmark_IsFrozen();
-			if (paused || toggled || film_frozen) {
+			if (paused || toggled || film_frozen || options_paused) {
 				XwaPort_PausedFrame();
 			} else {
 				XwaPort_Tick(delta_us);
@@ -672,7 +681,7 @@ int main(int argc, char** argv) {
 				XwaFilmBenchmark_MeasurementDone(XwaRemaster_BenchmarkFlightFrames());
 			}
 			uint64_t wake_us = presentation_interval_us();
-			if (!paused && !film_frozen) {
+			if (!paused && !film_frozen && !options_paused) {
 				const uint64_t task_us = XwaPort_NextWakeDelayUs();
 				if (task_us < wake_us)
 					wake_us = task_us;

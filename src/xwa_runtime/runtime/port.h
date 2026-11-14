@@ -48,6 +48,10 @@ void XwaPort_RequestOptionsWindowClose(void);
 int XwaPort_ConsumeOptionsWindowCloseRequest(void);
 void XwaPort_SetOptionsWindowOpen(int open);
 int XwaPort_OptionsWindowOpen(void);
+/* Whether the game pauses because the window is open: always, except in a
+ * network session. The host then runs XwaPort_PausedFrame instead of
+ * XwaPort_Tick, as for its own pause, and pauses the audio. */
+int XwaPort_OptionsWindowPausesGame(void);
 /* While the window captures a key for a binding, the host shortcuts are
  * not run. */
 void XwaPort_SetShortcutsCaptured(int captured);

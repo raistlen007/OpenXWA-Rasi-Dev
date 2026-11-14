@@ -957,8 +957,13 @@ void XwaRemaster_Frame(int32_t delta_us) {
 	if (!Aeron_SubmitTextureLayer(&layer)) {
 		XwaRemaster_FatalGpu("HD texture-layer presentation");
 	}
-	if (g.scene_kind == XWA_SCENE_FRONTEND || g.scene_kind == XWA_SCENE_FRONTEND_MODAL ||
-		g.scene_kind == XWA_SCENE_LOADING)
+	/* The cursor follows the mouse every frame, and the snapshot only says
+	   whether it shows. The options window has the system cursor, and the
+	   game doesn't take snapshots while the window pauses it, so the last
+	   snapshot can still show the game's cursor. */
+	if ((g.scene_kind == XWA_SCENE_FRONTEND || g.scene_kind == XWA_SCENE_FRONTEND_MODAL ||
+		 g.scene_kind == XWA_SCENE_LOADING) &&
+		!XwaPort_OptionsWindowOpen())
 		XwaRemasterFrontend_PresentCursor(g.ramp.alpha, g.mode == RM_VIEW_SPLIT);
 }
 

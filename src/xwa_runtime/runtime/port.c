@@ -18,7 +18,9 @@
 #include "xwa/frontend/frontend_display.h"
 #include "xwa/frontend/frontend_flight.h"
 #include "xwa/frontend/frontend_input.h"
+#include "xwa/frontend/frontend_mission_session.h"
 #include "xwa/frontend/frontend_resources.h"
+#include "xwa/frontend/net_transport.h"
 #include "xwa/input/forcefeedback.h"
 #include "xwa/render/renderer.h"
 #include "xwa/util/memory.h"
@@ -302,6 +304,14 @@ int XwaPort_ConsumeOptionsWindowCloseRequest(void) {
 void XwaPort_SetOptionsWindowOpen(int open) { g_xwaPortOptionsWindowOpen = open != 0; }
 
 int XwaPort_OptionsWindowOpen(void) { return g_xwaPortOptionsWindowOpen; }
+
+int XwaPort_OptionsWindowPausesGame(void) {
+	/* In a network session, the other players don't wait. */
+	const int network = g_netDirectPlayInterface != NULL ||
+						g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_NET_CLIENT ||
+						g_frontendMissionSessionMode == FRONTEND_MISSION_SESSION_NET_HOST;
+	return g_xwaPortOptionsWindowOpen && !network;
+}
 
 void XwaPort_SetShortcutsCaptured(int captured) { g_xwaPortShortcutsCaptured = captured != 0; }
 
