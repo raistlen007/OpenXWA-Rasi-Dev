@@ -1708,6 +1708,7 @@ static void snapshot_capture_object(XwaSnapshot* s, uint32_t i, uint32_t render_
 			XwaEngineGlows_HiddenMask(o->objectType, m->speed, (uint16_t)cd->aiFlight.maxSpeedCache,
 									  f->eg_hidden_mask);
 			f->surface_hidden_mask = XwaSurfaces_HiddenMask(o->objectType, cd, m->speed);
+			f->surface_dark_mask = XwaSurfaces_DarkMask(o->objectType, cd);
 		} else {
 			snapshot_capture_profile_meshes(s, f, o, m);
 		}

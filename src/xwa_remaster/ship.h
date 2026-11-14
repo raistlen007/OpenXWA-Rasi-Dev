@@ -85,6 +85,11 @@ int XwaRemasterShip_NeedsMeshTable(const AeronSceneMesh* mesh, const XwaFlightOb
  * tag at the object's state (XwaFlightObject.surface_hidden_mask). */
 uint32_t XwaRemasterShip_HiddenTagGroups(const AeronSceneMesh* mesh, const XwaFlightObject* f);
 
+/* The tag groups of `mesh` that `f` draws dark (AeronSceneMeshInstance
+ * .dark_tag_groups): those named by the `surfaces` rules that darken their
+ * tag at the object's state (XwaFlightObject.surface_dark_mask). */
+uint32_t XwaRemasterShip_DarkTagGroups(const AeronSceneMesh* mesh, const XwaFlightObject* f);
+
 /* Build a static mesh table that hides the slots whose component_state is
  * nonzero (the `count` values of a craft's componentState). Returns 1 when
  * any slot hides (callers skip the table bind otherwise). */

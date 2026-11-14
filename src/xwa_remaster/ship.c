@@ -1026,14 +1026,14 @@ static void ship_mesh_table_init(const AeronSceneMesh* mesh, const float (*rows)
 	memcpy(out->emissive_packed, d->emissive_packed, count * sizeof(float));
 }
 
-uint32_t XwaRemasterShip_HiddenTagGroups(const AeronSceneMesh* mesh, const XwaFlightObject* f) {
-	if (!mesh || !f || !f->surface_hidden_mask) {
+/* The tag groups of `mesh` that the `surfaces` rules in `rules` name. */
+static uint32_t ship_rule_tag_groups(const AeronSceneMesh* mesh, const XwaFlightObject* f, uint32_t rules) {
+	if (!mesh || !f || !rules) {
 		return 0;
 	}
 	uint32_t groups = 0;
 	for (unsigned rule = 0; rule < XWA_SURFACES_MAX_RULES; ++rule) {
-		const char* tag =
-			(f->surface_hidden_mask >> rule) & 1u ? XwaSurfaces_RuleTag(f->object_type, rule) : NULL;
+		const char* tag = (rules >> rule) & 1u ? XwaSurfaces_RuleTag(f->object_type, rule) : NULL;
 		for (uint32_t g = 0; tag && g < mesh->tag_groups.count; ++g) {
 			if (strcmp(mesh->tag_groups.names[g].name, tag) == 0) {
 				groups |= 1u << g;
@@ -1041,6 +1041,14 @@ uint32_t XwaRemasterShip_HiddenTagGroups(const AeronSceneMesh* mesh, const XwaFl
 		}
 	}
 	return groups;
+}
+
+uint32_t XwaRemasterShip_HiddenTagGroups(const AeronSceneMesh* mesh, const XwaFlightObject* f) {
+	return f ? ship_rule_tag_groups(mesh, f, f->surface_hidden_mask) : 0;
+}
+
+uint32_t XwaRemasterShip_DarkTagGroups(const AeronSceneMesh* mesh, const XwaFlightObject* f) {
+	return f ? ship_rule_tag_groups(mesh, f, f->surface_dark_mask) : 0;
 }
 
 int XwaRemasterShip_NeedsMeshTable(const AeronSceneMesh* mesh, const XwaFlightObject* f) {

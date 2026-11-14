@@ -42,6 +42,7 @@ import left out. See [Importer](importer.md#when-an-import-stops).
 | Greebles | Implemented | They become detail maps. The UV displacement modes are left out. | [Materials](materials.md#detail-maps) |
 | Lava | Implemented | The importer makes animated textures that look like XWAU's lava. | [Materials](materials.md#flipbooks) |
 | `SkipWhenDisabled` and `DisplayIf` | Implemented | | [Craft](craft.md#surfaces) |
+| Light maps off on disabled craft (`hook_d3dinfos_textures`) | Implemented | The importer gives the tag `illumination` to the materials with an illumination, and a `dark_when_disabled` rule. `Shadeless` materials keep their light. | [Craft](craft.md#surfaces) |
 | `Ambient` | Not needed | In XWAU, it keeps part of a surface lit when no light reaches it. OpenXWA's own ambient light, environment light and hangar light probes already do this, and they follow the colour and level of the scene's light. | |
 | Bloom | Implemented | OpenXWA has its own bloom, which follows the brightness of the image. `NoBloom` isn't needed: lower the emission of a surface that shouldn't glow. | [Materials](materials.md#pbr-materials) |
 | `EffectBloom` | Not implemented | Used by two Death Star models. | |

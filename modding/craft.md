@@ -531,7 +531,8 @@ its glows. This group only changes what you see.
 ### surfaces
 
 `surfaces` hides the materials and lights of the model that have a tag,
-while the craft is disabled or slow. Each key is a tag. The
+while the craft is disabled or slow. It can also turn their light off
+while the craft is disabled. Each key is a tag. The
 [models page](models.md) and the [materials page](materials.md) describe how
 to tag a light or a material. See also
 [material and light tags](reference/states_and_tags.md#material-and-light-tags).
@@ -540,18 +541,24 @@ to tag a light or a material. See also
 surfaces:
   engine_glow: {hidden_when_disabled: true, min_throttle_percent: 1}
   forcefield: {hidden_when_disabled: true}
+  illumination: {dark_when_disabled: true}
 ```
 
 | Key | Meaning |
 |-|-|
 | `hidden_when_disabled` | `true`: hidden while none of the craft's systems work. |
+| `dark_when_disabled` | `true`: gives out no light while none of the craft's systems work. The materials lose their emission and their emissive flipbooks, and the lights are off. The surfaces are still lit by the scene, and energy effects still show. |
 | `min_speed_percent` | Hidden while the speed is below this percent of the top speed. |
 | `min_speed_mglt` | Hidden while the speed is below this many MGLT. |
 | `min_throttle_percent` | Hidden while the throttle is below this percent, from 1 to 100. |
 | `min_ordered_speed_mglt` | Hidden while the speed that the craft's orders give is below this many MGLT. |
 
-A tag is hidden when any of its keys hides it. A tag can have lower-case
-letters, digits, `.` and `_`, and at most 63 characters. A model can have at
+A tag is hidden when any of its keys hides it. The importer gives the tag
+`illumination` to the materials with an XWAU illumination, the texels that
+give out light, such as windows and running lights. It also gives the tag
+the `dark_when_disabled` rule, so these lights go dark on a disabled craft,
+as in XWAU. A tag can have lower-case letters, digits, `.` and `_`, and at
+most 63 characters. A model can have at
 most 32 tags in this group. Objects without a craft record show all their
 surfaces. This group only changes what you see.
 

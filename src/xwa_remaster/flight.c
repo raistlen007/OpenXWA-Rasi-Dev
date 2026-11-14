@@ -5055,13 +5055,13 @@ static uint8_t fl_probe_set_owner(uint32_t i) {
  * the scene takes it at 683 lm/W (AERON_SCENE_LUMENS_PER_WATT).
  * `skip_baked` leaves out the lights baked into the model's probes, while
  * its probe set is placed. `variant` is the instance's variant index: a
- * light that names variants shines only with them. Lights in the instance's
- * `hidden_tag_groups` are left out. With `one_light`, only the first light
+ * light that names variants shines only with them. Lights in
+ * `off_tag_groups`, the instance's hidden and dark tag groups, are left out. With `one_light`, only the first light
  * that shines is added. Projectiles use it: a battle can have hundreds of
  * them, so each one gets a single light. */
 static void fl_add_model_lights(const AeronSceneMesh* mesh, const float transform[16],
 								const AeronSceneMeshTable* table, uint32_t variant,
-								uint32_t hidden_tag_groups, int keep, int skip_baked, int one_light) {
+								uint32_t off_tag_groups, int keep, int skip_baked, int one_light) {
 	if (!s.plight.enabled || !s.plight.model_lights) {
 		return;
 	}
@@ -5072,7 +5072,7 @@ static void fl_add_model_lights(const AeronSceneMesh* mesh, const float transfor
 			continue;
 		}
 		if (AeronScene_MeshLight(mesh, i, transform, AERON_OPT_UNITS_PER_METER, table, variant,
-								 hidden_tag_groups, s.plight.model_light_scale / AERON_SCENE_LUMENS_PER_WATT,
+								 off_tag_groups, s.plight.model_light_scale / AERON_SCENE_LUMENS_PER_WATT,
 								 exposure, &light)) {
 			s.pl_model_count++;
 			fl_pool_add(&light, 1, keep);
@@ -5611,6 +5611,7 @@ static int fl_map_submit_object(const XwaFlightMapObject* map_object, const XwaF
 	memcpy(instance.prev_transform, model_matrix, sizeof model_matrix);
 	instance.variant = f->node_switch;
 	instance.hidden_tag_groups = XwaRemasterShip_HiddenTagGroups(prepared.mesh, f);
+	instance.dark_tag_groups = XwaRemasterShip_DarkTagGroups(prepared.mesh, f);
 	XwaRemasterSkins_CheckMarkings(instance.mesh, instance.variant);
 	instance.mesh_table = prepared.table;
 	instance.prev_mesh_table = prepared.table;
@@ -7827,6 +7828,7 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 		memcpy(inst.transform, model_matrix, sizeof model_matrix);
 		inst.variant = f->node_switch;
 		inst.hidden_tag_groups = XwaRemasterShip_HiddenTagGroups(prepared.mesh, f);
+		inst.dark_tag_groups = XwaRemasterShip_DarkTagGroups(prepared.mesh, f);
 		inst.probe_set_owner = fl_probe_set_owner(i);
 		XwaRemasterSkins_CheckMarkings(inst.mesh, inst.variant);
 		if (scene_lighting.hangar_override && (int32_t)f->slot == cam->hangar_launch_ref_obj_idx) {
@@ -7883,11 +7885,11 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 			 * shines, for the colour it shows, instead of the stock light
 			 * (fl_derive_point_lights). */
 			fl_add_model_lights(prepared.mesh, model_matrix, inst.mesh_table, inst.variant,
-								inst.hidden_tag_groups, 0, 0, 1);
+								inst.hidden_tag_groups | inst.dark_tag_groups, 0, 0, 1);
 		} else {
 			AeronScene_AddMeshInstance(s.scene, &inst);
 			fl_add_model_lights(prepared.mesh, model_matrix, inst.mesh_table, inst.variant,
-								inst.hidden_tag_groups, 0, inst.probe_set_owner != 0, 0);
+								inst.hidden_tag_groups | inst.dark_tag_groups, 0, inst.probe_set_owner != 0, 0);
 			XwaRemasterGlowMarks_SubmitObject(s.scene, cmd, assets, snap, f, prepared.mesh, model_matrix,
 											  inst.mesh_table, s.glow_mark_emissive_strength,
 											  s.glow_mark_emissive_strength, 1);

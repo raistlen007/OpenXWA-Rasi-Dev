@@ -249,6 +249,7 @@ static int cmd_submit_model(AeronCommandBuffer* cmd, XwaRemasterAssets* assets, 
 		}
 	}
 	instance.hidden_tag_groups = XwaRemasterShip_HiddenTagGroups(mesh, object);
+	instance.dark_tag_groups = XwaRemasterShip_DarkTagGroups(mesh, object);
 	AeronScene_AddMeshInstance(s_cmd.scene, &instance);
 	if (target_effects) {
 		XwaRemasterGlowMarks_SubmitObject(s_cmd.scene, cmd, assets, snapshot, object, mesh, transform,

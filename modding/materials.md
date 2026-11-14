@@ -563,7 +563,8 @@ The images of effect libraries are also PNG files. They are scaled down to
 A material can have `tags`, like lights. The `surfaces` setting of the
 [craft page](craft.md) uses them to hide the materials and lights with a
 tag while the craft is disabled or slow, such as engine surfaces that go
-dark when the craft stops. See
+dark when the craft stops. It can also turn their light off while the
+craft is disabled, such as windows and running lights. See
 [material and light tags](reference/states_and_tags.md#material-and-light-tags).
 
 A tag is 1 to 63 characters: lower-case letters, digits, `.` and `_`. A
