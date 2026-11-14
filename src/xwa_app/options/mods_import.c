@@ -289,8 +289,9 @@ static void draw_done(void) {
 	format_time(time, sizeof time, p->end_us - p->start_us);
 	snprintf(line, sizeof line, "Time: %s", time);
 	AeronUi_Label(ui, line);
-	snprintf(line, sizeof line, "Mod folder: %s", p->mod);
-	AeronUi_Label(ui, line);
+	/* Help text wraps, and a folder can be longer than the window. */
+	snprintf(line, sizeof line, "Folder: %s", p->mod);
+	AeronUi_Help(ui, line);
 	if (p->result == XWA_MOD_IMPORT_CANCELLED)
 		AeronUi_Help(ui, "The mod isn't finished. Import it again to finish it.");
 	else if (p->result != XWA_MOD_IMPORT_OK)
