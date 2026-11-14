@@ -641,13 +641,13 @@ if(XWA_BUILD_MOD_IMPORTER)
         tools/mod_importer/models.c
         tools/mod_importer/stock_model_defs.c
         tools/mod_importer/stock_tables.c
-        # The game's craft tables, which the importer uses for its stock
-        # tables. The library is built without XWA_MODERN, so the tables have
-        # the stock sizes.
-        src/xwa/assets/object_type.c
-        src/xwa/assets/object_type_info.c
-        # The game's name tables. The importer writes these names in its files.
-        src/xwa_runtime/models/names.c
+        # The importer's own copy of the game's craft and name tables. The
+        # library is built without XWA_MODERN, so the tables keep their stock
+        # sizes. stock_symbols.h renames their symbols so they don't clash
+        # with the game's copy in xwa_core.
+        tools/mod_importer/stock_names.c
+        tools/mod_importer/stock_object_type.c
+        tools/mod_importer/stock_object_type_info.c
     )
     target_include_directories(xwa_mod_import_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_importer)
     target_include_directories(xwa_mod_import_lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -919,6 +919,7 @@ set(XWA_FORMAT_HEADERS
     src/xwa/util/time.h
     tools/mod_importer/import.h
     tools/mod_importer/import_internal.h
+    tools/mod_importer/stock_symbols.h
     tools/mod_importer/app/ui.h
 )
 

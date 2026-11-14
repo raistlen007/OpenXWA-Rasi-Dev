@@ -1,3 +1,5 @@
+#include "stock_symbols.h"
+
 #include "stock_tables.h"
 
 #include <string.h>
